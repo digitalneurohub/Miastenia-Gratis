@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MG-Sense · Digital Biomarkers per la Miastenia Gravis</title>
+
+<!-- PWA: identità, colori e installazione -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0F5E63">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="MG-Sense">
+
 <!--
   MG-Sense — Anteprima funzionale
   Quattro domini: oculare, bulbare, motorio, respiratorio.
@@ -1198,6 +1209,14 @@ function envCheck(){
 render();
 renderClin();
 envCheck();
+
+/* PWA: registra il service worker (offline + installabilità).
+   La guardia su file:// mantiene il file utilizzabile anche con doppio click. */
+if('serviceWorker' in navigator && location.protocol!=='file:'){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
 </script>
 </body>
 </html>
