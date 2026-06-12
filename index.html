@@ -7,7 +7,7 @@
 
 <!-- PWA: identità, colori e installazione -->
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#2E7D4F">
+<meta name="theme-color" content="#2D7A52">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
@@ -22,14 +22,14 @@
   File autonomo: aprire con doppio click in qualsiasi browser. Funziona offline.
 -->
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
   :root{
-    --bg:#F4F7F8; --card:#FFFFFF; --ink:#15262C; --inkSoft:#5A6E75;
-    --line:#DCE5E8; --primary:#2E7D4F; --primarySoft:#E5F2EA;
-    --ok:#2E7D4F; --okSoft:#E5F2EA; --warn:#B07614; --warnSoft:#FBF1DC;
-    --alert:#B3372E; --alertSoft:#FAE7E5;
-    --font:'IBM Plex Sans',system-ui,sans-serif;
+    --bg:#EEF3EE; --card:#FFFFFF; --ink:#1B3A2A; --inkSoft:#61756A;
+    --line:#DDE4DF; --primary:#2D7A52; --primarySoft:#DCEBDF;
+    --ok:#2D7A52; --okSoft:#DCEBDF; --warn:#A8730F; --warnSoft:#F6ECD7;
+    --alert:#B3372E; --alertSoft:#F8E5E2;
+    --font:'Albert Sans',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,monospace;
   }
   *{box-sizing:border-box;}
@@ -41,7 +41,7 @@
   .mono{font-family:var(--mono);}
   @keyframes mgPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.5}}
 
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
+  .card{background:var(--card);border:none;border-radius:20px;padding:16px;box-shadow:0 4px 16px rgba(27,58,42,.05);}
   .seclabel{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkSoft);margin:18px 2px 8px;}
   .badge{font-size:11.5px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap;display:inline-block;}
   .badge.ok{background:var(--okSoft);color:var(--ok);}
@@ -49,8 +49,8 @@
   .badge.alert{background:var(--alertSoft);color:var(--alert);}
   .badge.neutral{background:var(--primarySoft);color:var(--primary);}
 
-  .btn{background:var(--card);color:var(--primary);border:1.5px solid var(--primary);border-radius:10px;padding:11px 16px;font-size:14.5px;font-weight:600;}
-  .btn.primary{background:var(--primary);color:#fff;}
+  .btn{background:var(--card);color:#1B4D33;border:2px solid #C7D7CC;border-radius:999px;padding:13px 18px;font-size:14.5px;font-weight:700;}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
   .btn.small{padding:7px 12px;font-size:13px;}
   .btn.full{width:100%;}
 
@@ -58,29 +58,29 @@
   .hidden{display:none !important;}
 
   /* app bar */
-  .appbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-shrink:0;padding-top:calc(10px + env(safe-area-inset-top));}
+  .appbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 20px;background:var(--bg);border-bottom:none;flex-shrink:0;padding-top:calc(12px + env(safe-area-inset-top));}
   .brand{display:flex;align-items:center;gap:10px;min-width:0;}
-  .brand img{width:34px;height:34px;border-radius:8px;flex-shrink:0;}
+  .brand img{width:34px;height:34px;border-radius:999px;flex-shrink:0;}
   .brandname{font-weight:700;font-size:16px;line-height:1.15;}
   .brandsub{font-size:11px;color:var(--inkSoft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .rolebtn{display:flex;align-items:center;gap:7px;border:1.5px solid var(--primary);background:var(--card);color:var(--primary);border-radius:999px;padding:7px 13px;font-weight:600;font-size:13px;flex-shrink:0;}
-  .rolebtn .ric{font-size:17px;line-height:1;}
+  .rolebtn{display:flex;align-items:center;gap:7px;border:none;background:var(--card);color:var(--primary);border-radius:999px;padding:9px 14px;font-weight:700;font-size:13px;flex-shrink:0;box-shadow:0 2px 8px rgba(27,58,42,.10);}
+  .rolebtn .ric{display:flex;align-items:center;line-height:1;}
 
   /* viste a tutto schermo */
   .appwrap{flex:1;display:flex;flex-direction:column;min-height:0;}
   .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px max(16px,calc(50% - 280px)) 24px;}
-  .bottomnav{display:flex;border-top:1px solid var(--line);background:var(--card);flex-shrink:0;padding:0 max(0px,calc(50% - 280px)) env(safe-area-inset-bottom);}
-  .bottomnav button{flex:1;padding:9px 0 11px;border:none;background:transparent;color:var(--inkSoft);border-top:2.5px solid transparent;font-weight:500;font-size:10.5px;}
-  .bottomnav button.active{color:var(--primary);border-top-color:var(--primary);font-weight:700;}
-  .bottomnav .ic{font-size:18px;margin-bottom:1px;}
+  .bottomnav{display:flex;gap:2px;border:none;background:var(--card);flex-shrink:0;margin:8px max(18px,calc(50% - 262px)) calc(12px + env(safe-area-inset-bottom));border-radius:999px;box-shadow:0 8px 28px rgba(27,58,42,.12);padding:7px;}
+  .bottomnav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 0 6px;border:none;background:transparent;color:#8AA191;border-radius:999px;font-weight:600;font-size:10px;}
+  .bottomnav button.active{color:#fff;background:var(--primary);font-weight:700;}
+  .bottomnav .ic{display:flex;align-items:center;justify-content:center;height:20px;}
 
   /* desktop dashboard */
   .deskbody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px max(20px,calc(50% - 480px)) 32px;}
 
   h1,h2{margin:0;}
   details summary{cursor:pointer;font-size:13.5px;color:var(--primary);font-weight:600;}
-  .pill{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 13px;font-size:13px;}
-  .pill.active{border-color:var(--primary);background:var(--primarySoft);color:var(--primary);}
+  .pill{border:none;background:var(--card);color:#1B4D33;border-radius:999px;padding:9px 15px;font-size:13px;box-shadow:0 2px 8px rgba(27,58,42,.06);}
+  .pill.active{background:var(--primary);color:#fff;font-weight:600;}
 
   /* mobile: app bar compatta, pulsante ruolo a sola icona */
   @media (max-width:480px){
@@ -102,7 +102,7 @@
     </div>
   </div>
   <button class="rolebtn" id="roleBtn" onclick="toggleRole()" aria-label="Passa alla vista medico" title="Passa alla vista medico">
-    <span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>
+    <span class="ric" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4" fill="currentColor"></circle><path d="M2 20a8 8 0 0 1 16 0z" fill="currentColor"></path><path d="M19 3v6M16 6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></span><span class="rlabel">Medico</span>
   </button>
 </header>
 <div id="envDiag" style="flex-shrink:0;"></div>
@@ -153,7 +153,7 @@ function seriesFor(range){
   };
 }
 
-const C={primary:'#2E7D4F',alert:'#B3372E',warn:'#B07614',ok:'#2E7D4F',inkSoft:'#5A6E75'};
+const C={primary:'#2D7A52',alert:'#B3372E',warn:'#A8730F',ok:'#2D7A52',inkSoft:'#61756A'};
 
 /* ---------- helper SVG sparkline ---------- */
 function spark(data,baseline,color,h=44,w=280){
@@ -173,61 +173,62 @@ function spark(data,baseline,color,h=44,w=280){
 /* ============ SCHERMATE PAZIENTE ============ */
 
 function ScreenHome(){
-  const tasks=[
-    {label:"Test guidato MG — oculare, vocale, motorio e respiratorio",done:false,cta:"Inizia",go:"test"},
-    {label:"Diario MG-ADL — sintomi delle ultime 24h",done:true,go:"epro"},
-    {label:"Single-breath count serale — funzione respiratoria",done:true,go:"test"},
-  ];
-  const taskHTML=tasks.map(t=>`
-    <div class="card" style="margin-bottom:8px;${t.done?'opacity:.6;':''}padding:12px;cursor:pointer;" onclick="setTab('${t.go}')">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div aria-hidden="true" style="width:22px;height:22px;border-radius:999px;flex-shrink:0;border:2px solid ${t.done?C.ok:'var(--line)'};background:${t.done?C.ok:'transparent'};color:#fff;font-size:13px;font-weight:700;display:grid;place-items:center;">${t.done?'✓':''}</div>
-        <div style="flex:1;">${t.label}</div>
-        ${!t.done?`<button class="btn small primary" onclick="setTab('${t.go}')">${t.cta}</button>`:''}
-      </div>
-    </div>`).join('');
-
+  const chip=(label)=>`
+    <div class="card" style="flex:1;padding:12px 14px;display:flex;align-items:center;gap:9px;opacity:.75;">
+      <span aria-hidden="true" style="width:24px;height:24px;border-radius:999px;background:var(--ok);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700;flex-shrink:0;">✓</span>
+      <span style="font-size:12.5px;font-weight:600;">${label}</span>
+    </div>`;
   return `
-    <div class="row-flex" style="align-items:baseline;">
-      <div>
-        <div style="font-size:13px;color:var(--inkSoft);">Buongiorno,</div>
-        <div style="font-size:21px;font-weight:700;">Maria R.</div>
-      </div>
-      <span class="mono" style="font-size:12px;color:var(--inkSoft);">gio 11 giu</span>
+    <div style="margin-top:6px;">
+      <div style="font-size:25px;font-weight:700;letter-spacing:-0.01em;">Buongiorno, Maria</div>
+      <div style="font-size:13.5px;color:var(--inkSoft);margin-top:2px;">giovedì 11 giugno · tutto in linea con il tuo baseline</div>
     </div>
 
-    <div class="seclabel">Stato di oggi</div>
-    <div class="card" style="border-left:4px solid ${C.ok};">
-      <div class="row-flex">
-        <div style="font-size:15px;font-weight:600;">Indice sintomatologico</div>
-        <span class="badge ok">In linea con il baseline</span>
+    <div class="card" style="margin-top:16px;padding:20px;box-shadow:0 6px 24px rgba(27,58,42,.07);">
+      <div style="display:flex;align-items:center;gap:18px;">
+        <svg width="84" height="84" viewBox="0 0 84 84" aria-hidden="true">
+          <circle cx="42" cy="42" r="34" fill="none" stroke="#E3EDE5" stroke-width="9"></circle>
+          <circle cx="42" cy="42" r="34" fill="none" stroke="#2D7A52" stroke-width="9" stroke-linecap="round" stroke-dasharray="142 214" transform="rotate(-90 42 42)"></circle>
+          <text x="42" y="40" text-anchor="middle" font-size="19" font-weight="700" fill="#1B3A2A" font-family="Albert Sans, sans-serif">2/3</text>
+          <text x="42" y="55" text-anchor="middle" font-size="9.5" fill="#61756A" font-family="Albert Sans, sans-serif">attività</text>
+        </svg>
+        <div style="flex:1;">
+          <div style="font-size:16.5px;font-weight:700;line-height:1.3;">Ti manca solo il test guidato</div>
+          <div style="font-size:13px;color:var(--inkSoft);line-height:1.5;margin-top:4px;">4 domini, circa 5 minuti. Meglio farlo prima di pranzo.</div>
+        </div>
       </div>
-      <div style="margin-top:8px;font-size:13px;color:var(--inkSoft);line-height:1.5;">
-        Forza e affaticabilità nella norma rispetto alle tue ultime settimane. Lieve ptosi rilevata stamattina, in miglioramento dopo il riposo. Nessun segnale bulbare o respiratorio.
+      <button class="btn primary full" style="margin-top:16px;" onclick="setTab('test')">Inizia il test</button>
+    </div>
+
+    <div class="card" style="margin-top:12px;background:var(--okSoft);box-shadow:none;">
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <span aria-hidden="true" style="width:36px;height:36px;border-radius:999px;background:var(--ok);color:#fff;display:grid;place-items:center;flex-shrink:0;font-size:16px;font-weight:700;">✓</span>
+        <div>
+          <div style="font-size:14.5px;font-weight:700;color:#1B4D33;">Stato di oggi: in linea</div>
+          <div style="font-size:13px;color:#2E5C42;line-height:1.5;margin-top:3px;">Lieve ptosi stamattina, in miglioramento dopo il riposo. Nessun segnale bulbare o respiratorio.</div>
+        </div>
       </div>
     </div>
 
-    <div class="seclabel">Da fare oggi · 2 di 3 completate</div>
-    ${taskHTML}
+    <div class="seclabel">Completate oggi</div>
+    <div style="display:flex;gap:10px;">
+      ${chip('Diario MG-ADL')}
+      ${chip('Respiro')}
+    </div>
 
     <div class="seclabel">Andamento vs baseline personale</div>
     <div class="card">
       <div class="row-flex" style="margin-bottom:6px;">
-        <span style="font-size:12.5px;color:var(--inkSoft);">Apertura palpebrale media (fatigability oculare)</span>
-        <span class="badge neutral">+4% vs baseline</span>
+        <span style="font-size:13px;font-weight:600;">Apertura palpebrale</span>
+        <span class="badge ok">+4% vs baseline</span>
       </div>
       ${spark(D1,64,C.primary)}
-      <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:var(--inkSoft);">
-        <span>— misurazioni (10 gg)</span>
-        <span style="border-bottom:1.5px dashed var(--inkSoft);">baseline personale</span>
-      </div>
+      <div style="font-size:11.5px;color:var(--inkSoft);margin-top:6px;">ultimi 10 giorni · tratteggio = baseline personale</div>
     </div>
 
     <div style="height:8px;"></div>
-    <div class="card" style="background:var(--primarySoft);border:none;padding:12px;">
-      <div style="font-size:12.5px;color:var(--primary);line-height:1.5;">
-        ℹ️ I sintomi della miastenia peggiorano tipicamente nel corso della giornata: misurare al mattino e alla sera aiuta a cogliere queste fluttuazioni.
-      </div>
+    <div class="card" style="background:var(--primarySoft);box-shadow:none;padding:12px 16px;">
+      <div style="font-size:12.5px;color:#1B4D33;line-height:1.5;">I sintomi della miastenia peggiorano tipicamente nel corso della giornata: misurare al mattino e alla sera aiuta a cogliere queste fluttuazioni.</div>
     </div>
   `;
 }
@@ -235,10 +236,10 @@ function ScreenHome(){
 /* --- Test guidato (stato interno: step) --- */
 let testStep=0;
 const testSteps=[
-  {icon:"👁️",sensor:"Fotocamera",label:"Oculare — fatigability test dello sguardo in alto",hint:"Mantieni lo sguardo rivolto verso l'alto per 60 secondi guardando il punto in cima allo schermo. La fotocamera misura l'abbassamento progressivo della palpebra (ptosi) e l'eventuale comparsa di diplopia."},
-  {icon:"🎙️",sensor:"Microfono",label:"Bulbare — lettura ad alta voce",hint:"Leggi il brano mostrato a voce normale. L'app analizza la voce (nasalità, pause, calo di intensità) per rilevare l'affaticamento bulbare e i primi segni di disartria o disfonia."},
-  {icon:"💪",sensor:"Accelerometro / giroscopio",label:"Motorio — arm drift e test di resistenza",hint:"Tieni il telefono nella mano e mantieni il braccio teso in avanti finché riesci. I sensori misurano il tempo di tenuta, il tremore e la caduta progressiva dell'arto (debolezza prossimale affaticabile)."},
-  {icon:"🫁",sensor:"Microfono",label:"Respiratorio — single-breath count",hint:"Fai un respiro profondo e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. Il microfono misura la durata della fonazione, indicatore validato della riserva respiratoria nella MG."},
+  {icon:'<svg width="30" height="30" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5.5" fill="#2D7A52"></ellipse><circle cx="12" cy="12" r="2.6" fill="#FFFFFF"></circle></svg>',sensor:"Fotocamera",label:"Oculare — fatigability test dello sguardo in alto",hint:"Mantieni lo sguardo rivolto verso l'alto per 60 secondi guardando il punto in cima allo schermo. La fotocamera misura l'abbassamento progressivo della palpebra (ptosi) e l'eventuale comparsa di diplopia."},
+  {icon:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#2D7A52"></rect><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#2D7A52" stroke-width="2" stroke-linecap="round"></path><line x1="12" y1="17.5" x2="12" y2="21" stroke="#2D7A52" stroke-width="2" stroke-linecap="round"></line></svg>',sensor:"Microfono",label:"Bulbare — lettura ad alta voce",hint:"Leggi il brano mostrato a voce normale. L'app analizza la voce (nasalità, pause, calo di intensità) per rilevare l'affaticamento bulbare e i primi segni di disartria o disfonia."},
+  {icon:'<svg width="28" height="28" viewBox="0 0 24 24"><rect x="2" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"></rect><rect x="18" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"></rect><rect x="6" y="11" width="12" height="2" rx="1" fill="#2D7A52"></rect></svg>',sensor:"Accelerometro / giroscopio",label:"Motorio — arm drift e test di resistenza",hint:"Tieni il telefono nella mano e mantieni il braccio teso in avanti finché riesci. I sensori misurano il tempo di tenuta, il tremore e la caduta progressiva dell'arto (debolezza prossimale affaticabile)."},
+  {icon:'<svg width="28" height="28" viewBox="0 0 24 24"><rect x="4" y="6.5" width="16" height="2.6" rx="1.3" fill="#2D7A52"></rect><rect x="4" y="11" width="12" height="2.6" rx="1.3" fill="#2D7A52"></rect><rect x="4" y="15.5" width="8" height="2.6" rx="1.3" fill="#2D7A52"></rect></svg>',sensor:"Microfono",label:"Respiratorio — single-breath count",hint:"Fai un respiro profondo e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. Il microfono misura la durata della fonazione, indicatore validato della riserva respiratoria nella MG."},
 ];
 function anyTestRunning(){
   return eyeTest.phase==='running' || voiceTest.phase==='running' || armDrift.phase==='running' || armDrift.phase==='align' || sbcTest.phase==='running';
@@ -583,7 +584,7 @@ function armCard(){
   if(armDrift.phase==='idle'){
     return `
       <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
-        <div aria-hidden="true" style="font-size:44px;">💪</div>
+        <div aria-hidden="true" style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24"><rect x="2" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"></rect><rect x="18" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"></rect><rect x="6" y="11" width="12" height="2" rx="1" fill="#2D7A52"></rect></svg></div>
         <div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">Motorio — arm drift e test di resistenza</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
@@ -603,7 +604,7 @@ function armCard(){
     return `
       <div class="card" id="armAlign" style="margin-top:16px;padding:20px;text-align:center;">
         <span class="badge neutral">preparazione</span>
-        <div aria-hidden="true" style="font-size:42px;margin-top:10px;">📱</div>
+        <div aria-hidden="true" style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:10px auto 0;"><svg width="28" height="28" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5" fill="#2D7A52"></rect><rect x="10" y="18.2" width="4" height="1.6" rx="0.8" fill="#FFFFFF"></rect></svg></div>
         <div style="margin-top:10px;font-weight:700;font-size:15px;">Metti il telefono in orizzontale</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
           Appoggialo sul palmo con lo schermo verso l'alto, braccio teso in avanti all'altezza della spalla. Tienilo in piano per 3 secondi: la registrazione parte da sola, con un bip ogni secondo.
@@ -899,7 +900,7 @@ function eyeCard(){
       : `<div style="margin-top:10px;font-size:12px;color:var(--inkSoft);line-height:1.5;">Al primo avvio vengono scaricati ~3 MB (modello di riconoscimento del volto); poi restano in cache anche offline. Il browser chiederà l'accesso alla fotocamera: tocca <b>Consenti</b>.</div>`;
     return `
       <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
-        <div aria-hidden="true" style="font-size:44px;">${s.icon}</div>
+        <div aria-hidden="true" style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;">${s.icon}</div>
         <div style="margin-top:10px;"><span class="badge neutral">${s.sensor} frontale · Face Landmarker</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">${s.label}</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
@@ -912,7 +913,7 @@ function eyeCard(){
 
   if(eyeTest.phase==='running'){
     const visual = eyeTest.source==='sim'
-      ? `<div aria-hidden="true" style="height:150px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#EDF3F4,#EDF3F4 10px,#E5EDEF 10px,#E5EDEF 20px);border:1px dashed #9AB3B9;font-size:40px;">👁️</div>`
+      ? `<div aria-hidden="true" style="height:150px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#E7EFE9,#E7EFE9 10px,#DEE9E1 10px,#DEE9E1 20px);border:1.5px dashed #A9C0B1;font-size:12px;font-family:var(--mono);color:var(--inkSoft);">demo simulata — fotocamera non disponibile</div>`
       : `<video id="eyeVideo" playsinline muted autoplay style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;background:#15262C;transform:scaleX(-1);margin-top:12px;"></video>`;
     return `
       <div class="card" id="eyeLive" style="margin-top:16px;padding:18px;">
@@ -1331,7 +1332,7 @@ function voiceCard(){
   if(voiceTest.phase==='idle'){
     return `
       <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
-        <div aria-hidden="true" style="font-size:44px;">${s.icon}</div>
+        <div aria-hidden="true" style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;">${s.icon}</div>
         <div style="margin-top:10px;"><span class="badge neutral">${s.sensor}</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">${s.label}</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">${s.hint} Durata: ${voiceTest.duration} secondi, in ambiente silenzioso. Vengono stimati F0, jitter, shimmer, HNR e le pause.</div>
@@ -1347,7 +1348,7 @@ function voiceCard(){
         <div style="height:6px;background:var(--line);border-radius:999px;margin-top:10px;"><div id="voiceBar" style="width:0%;height:100%;background:var(--primary);border-radius:999px;"></div></div>
         <div id="voiceStatus" style="font-size:11px;color:var(--inkSoft);margin-top:6px;text-align:center;">avvio microfono…</div>
 
-        <div class="card" style="margin-top:12px;padding:12px;background:var(--primarySoft);border:none;font-size:14px;line-height:1.65;text-align:left;">📖 ${READING}</div>
+        <div class="card" style="margin-top:12px;padding:12px;background:var(--primarySoft);border:none;font-size:14px;line-height:1.65;text-align:left;">${READING}</div>
 
         <div style="margin-top:14px;">
           <div class="row-flex" style="font-size:11px;color:var(--inkSoft);"><span>intensità vocale</span><span class="mono" id="voiceLevel" style="font-weight:600;color:var(--primary);font-size:14px;">0</span></div>
@@ -1527,7 +1528,7 @@ function sbcCard(){
   if(sbcTest.phase==='idle'){
     return `
       <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
-        <div aria-hidden="true" style="font-size:44px;">${s.icon}</div>
+        <div aria-hidden="true" style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;">${s.icon}</div>
         <div style="margin-top:10px;"><span class="badge neutral">${s.sensor}</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">${s.label}</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">${s.hint} Il test termina da solo quando ti fermi.</div>
@@ -1669,7 +1670,7 @@ function ScreenEPRO(){
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${pillRow(BREATH_OPTS,epro.breath,'setBreath')}</div>
     </div>`
   : `
-    <button class="card" style="width:100%;padding:12px;border-style:dashed;color:var(--primary);font-size:13px;text-align:center;font-weight:600;" onclick="eproMore()">
+    <button class="card" style="width:100%;padding:12px;border:2px dashed #A9C0B1;box-shadow:none;color:var(--primary);font-size:13px;text-align:center;font-weight:600;" onclick="eproMore()">
       + Aggiungi le altre voci MG-ADL: alzarsi dalla sedia, lavarsi/pettinarsi, respirazione
     </button>`;
   return `
@@ -1718,14 +1719,14 @@ function metricCard(name,data,base,tone){
 function ScreenTrend(){
   const S=seriesFor(trendRange);
   const ranges=["7g","30g","90g","1a"];
-  const rangeHTML=ranges.map(r=>`<button onclick="setRange('${r}')" style="flex:1;padding:7px 0;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid ${trendRange===r?'var(--primary)':'var(--line)'};background:${trendRange===r?'var(--primary)':'var(--card)'};color:${trendRange===r?'#fff':'var(--inkSoft)'};">${r}</button>`).join('');
+  const rangeHTML=ranges.map(r=>`<button onclick="setRange('${r}')" style="flex:1;padding:9px 0;border-radius:999px;font-size:13px;font-weight:600;border:none;background:${trendRange===r?'var(--primary)':'var(--card)'};color:${trendRange===r?'#fff':'var(--inkSoft)'};box-shadow:0 2px 8px rgba(27,58,42,.06);">${r}</button>`).join('');
   const respBlock = trendResp ? `
     <div class="seclabel">Dominio respiratorio</div>
     ${metricCard("Single-breath count — conteggio in un respiro",S.sbc,45,C.warn)}
     ${metricCard("SpO₂ notturna media (%)",S.spo2,97,C.ok)}
-    <button class="card" style="width:100%;padding:10px;border-style:dashed;color:var(--inkSoft);font-size:12.5px;text-align:center;" onclick="toggleResp()">Nascondi dominio respiratorio ▴</button>`
+    <button class="card" style="width:100%;padding:10px;border:2px dashed #A9C0B1;box-shadow:none;color:var(--inkSoft);font-size:12.5px;text-align:center;" onclick="toggleResp()">Nascondi dominio respiratorio ▴</button>`
   : `
-    <button class="card" style="width:100%;padding:12px;border-style:dashed;color:var(--primary);font-weight:600;font-size:13px;text-align:center;" onclick="toggleResp()">
+    <button class="card" style="width:100%;padding:12px;border:2px dashed #A9C0B1;box-shadow:none;color:var(--primary);font-weight:600;font-size:13px;text-align:center;" onclick="toggleResp()">
       + Dominio respiratorio: single-breath count, SpO₂ notturna ▾
     </button>`;
   return `
@@ -1767,11 +1768,11 @@ function ScreenRoutine(){
     <div style="font-size:19px;font-weight:700;">Promemoria e routine</div>
     <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Misurazioni programmate con notifica push</div>
 
-    <div class="seclabel">🌅 Routine del mattino · al risveglio, prima dei sintomi</div>
+    <div class="seclabel">Routine del mattino · al risveglio, prima dei sintomi</div>
     ${rRow('m1','08:00','Single-breath count — funzione respiratoria')}
     ${rRow('m2','08:15','Test guidato MG — oculare, vocale, motorio')}
 
-    <div class="seclabel">🌙 Routine della sera · a fine giornata, picco di affaticamento</div>
+    <div class="seclabel">Routine della sera · a fine giornata, picco di affaticamento</div>
     ${rRow('s1','20:00','Test guidato MG — confronto mattino/sera')}
     ${rRow('s2','21:00','Diario MG-ADL — sintomi delle 24h')}
 
@@ -1887,7 +1888,7 @@ function alertArea(p){
       <div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;line-height:1.5;">L'azione scelta viene registrata nel diario clinico del paziente.</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
         <button class="btn small" onclick="resolveAlert('handled')">✓ Presa in carico — declassa a «Da rivedere»</button>
-        <button class="btn small" onclick="resolveAlert('visit')">📅 Richiedi visita prioritaria in ambulatorio</button>
+        <button class="btn small" onclick="resolveAlert('visit')">Richiedi visita prioritaria in ambulatorio</button>
         <button class="btn small" onclick="closePanel()">Annulla</button>
       </div>
     </div>`;
@@ -1898,12 +1899,12 @@ function alertArea(p){
       <textarea rows="3" style="width:100%;margin-top:8px;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;">${msgFor(p)}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
         <button class="btn small primary" onclick="sendMsg()">Invia nell'app</button>
-        <button class="btn small" onclick="logCall()">📞 Avvia chiamata</button>
+        <button class="btn small" onclick="logCall()">Avvia chiamata</button>
         <button class="btn small" onclick="closePanel()">Annulla</button>
       </div>
     </div>`;
   }
-  html+=`<button class="card" style="width:100%;text-align:left;padding:12px;border-style:dashed;font-size:12.5px;color:var(--inkSoft);" onclick="openPanel('soglie')">
+  html+=`<button class="card" style="width:100%;text-align:left;padding:12px;border:2px dashed #A9C0B1;box-shadow:none;font-size:12.5px;color:var(--inkSoft);" onclick="openPanel('soglie')">
     Configurazione soglie: variazione gialla −${thresholds.yellow}% / rossa −${thresholds.red}% o segnale respiratorio per ciascun dominio — tocca per modificare ${clinPanel==='soglie'?'▴':'▾'}
   </button>`;
   if(clinPanel==='soglie'){
@@ -1935,7 +1936,7 @@ function renderClin(){
   const nA=patients.filter(x=>x.flag==='alert').length;
   const nW=patients.filter(x=>x.flag==='warn').length;
   const list=shown.length?shown.map(pt=>`
-    <div class="card" style="padding:12px;margin-bottom:8px;cursor:pointer;border-color:${selPatient===pt.id?'var(--primary)':'var(--line)'};border-width:${selPatient===pt.id?'2px':'1px'};border-left:4px solid ${flagColor[pt.flag]};" onclick="selectPatient(${pt.id})">
+    <div class="card" style="padding:12px;margin-bottom:8px;cursor:pointer;outline:${selPatient===pt.id?'2.5px solid var(--primary)':'none'};border-left:4px solid ${flagColor[pt.flag]};" onclick="selectPatient(${pt.id})">
       <div style="display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:center;">
         <div>
           <div class="mono" style="font-weight:600;font-size:14px;">${pt.code} · ${initials(pt.name)}</div>
@@ -1945,7 +1946,7 @@ function renderClin(){
         <span class="badge ${pt.flag}">${pt.flagLabel}</span>
       </div>
     </div>`).join('')
-    :`<div class="card" style="padding:14px;border-style:dashed;color:var(--inkSoft);font-size:13px;text-align:center;">Nessun paziente in questa categoria.</div>`;
+    :`<div class="card" style="padding:14px;border:2px dashed #A9C0B1;box-shadow:none;color:var(--inkSoft);font-size:13px;text-align:center;">Nessun paziente in questa categoria.</div>`;
 
   const pills=[['all','Tutti'],['alert','Con alert'],['lowadh','Bassa aderenza']]
     .map(([k,l])=>`<button class="pill ${clinFilter===k?'active':''}" onclick="setFilter('${k}')">${l}</button>`).join('');
@@ -2014,11 +2015,11 @@ function renderClin(){
 
 /* ============ NAVIGAZIONE ============ */
 const TABS=[
-  {id:"home",icon:"🏠",label:"Home",fn:ScreenHome},
-  {id:"test",icon:"🩺",label:"Test",fn:ScreenTest},
-  {id:"epro",icon:"📋",label:"Diario",fn:ScreenEPRO},
-  {id:"trend",icon:"📈",label:"Trend",fn:ScreenTrend},
-  {id:"routine",icon:"⏰",label:"Routine",fn:ScreenRoutine},
+  {id:"home",icon:'<svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z" fill="currentColor"></path></svg>',label:"Home",fn:ScreenHome},
+  {id:"test",icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 13h4l2.5-6 4 11 2.5-5h5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>',label:"Test",fn:ScreenTest},
+  {id:"epro",icon:'<svg width="20" height="20" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="3" fill="currentColor"></rect><rect x="9" y="2.5" width="6" height="4" rx="2" fill="currentColor"></rect></svg>',label:"Diario",fn:ScreenEPRO},
+  {id:"trend",icon:'<svg width="20" height="20" viewBox="0 0 24 24"><rect x="4" y="13" width="4" height="7" rx="2" fill="currentColor"></rect><rect x="10" y="9" width="4" height="11" rx="2" fill="currentColor"></rect><rect x="16" y="5" width="4" height="15" rx="2" fill="currentColor"></rect></svg>',label:"Trend",fn:ScreenTrend},
+  {id:"routine",icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2.4"></circle><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',label:"Routine",fn:ScreenRoutine},
 ];
 let currentTab="home";
 function setTab(id){stopAllTests();currentTab=id;render();}
@@ -2040,8 +2041,8 @@ function setRole(r){
   // il pulsante mostra l'icona della vista verso cui si passa
   const btn=document.getElementById('roleBtn');
   btn.innerHTML=patient
-    ? '<span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>'
-    : '<span class="ric" aria-hidden="true">👤</span><span class="rlabel">Paziente</span>';
+    ? '<span class="ric" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4" fill="currentColor"></circle><path d="M2 20a8 8 0 0 1 16 0z" fill="currentColor"></path><path d="M19 3v6M16 6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></span><span class="rlabel">Medico</span>'
+    : '<span class="ric" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="currentColor"></circle><path d="M4 20a8 8 0 0 1 16 0z" fill="currentColor"></path></svg></span><span class="rlabel">Paziente</span>';
   const lbl=patient?'Passa alla vista medico':'Passa alla vista paziente';
   btn.setAttribute('aria-label',lbl);
   btn.setAttribute('title',lbl);
