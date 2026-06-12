@@ -1686,7 +1686,13 @@ function ScreenTest(){
 let epro={v1:5,v2:3,choice:null,more:false,v4:2,v5:1,breath:null,sent:false};
 const VOICE_OPTS=["Normale","Lievemente nasale/debole","Nasale a fine giornata","Difficile da capire"];
 const BREATH_OPTS=["Normale","Affanno da sforzo","Affanno a riposo","Necessità di supporto"];
-function setV(k,val){epro[k]=+val;render();}
+function setV(k,val){
+  epro[k]=Math.round(+val);   // cursore continuo, ma valore intero (niente decimali)
+  // aggiorna solo il numero mostrato, senza ricostruire la card: così lo
+  // slider continuo non viene ricreato a metà trascinamento e resta fluido.
+  const out=document.getElementById('eproval-'+k);
+  if(out) out.textContent=epro[k];
+}
 function setChoice(o){epro.choice=o;render();}
 function setBreath(o){epro.breath=o;render();}
 function eproMore(){epro.more=true;render();}
@@ -1709,10 +1715,10 @@ function sliderQ(k,q,minL,maxL){
   return `
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:14px;font-weight:600;line-height:1.5;">${q}</div>
-      <input type="range" min="0" max="10" value="${epro[k]}" oninput="setV('${k}',this.value)" style="margin-top:14px;" aria-label="${q}">
+      <input type="range" min="0" max="10" step="any" value="${epro[k]}" oninput="setV('${k}',this.value)" style="margin-top:14px;" aria-label="${q}">
       <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--inkSoft);">
         <span>${minL}</span>
-        <span class="mono" style="font-weight:600;color:var(--primary);">${epro[k]}</span>
+        <span class="mono" id="eproval-${k}" style="font-weight:600;color:var(--primary);">${Math.round(epro[k])}</span>
         <span>${maxL}</span>
       </div>
     </div>`;
@@ -2035,7 +2041,15 @@ function logCall(){
   logAction(`${p.code}: chiamata avviata (demo)`);
   clinPanel=null; renderClin();
 }
-function setThr(k,v){thresholds[k]=+v;renderClin();}
+function setThr(k,v){
+  thresholds[k]=Math.round(+v);
+  // Aggiorna solo il valore mostrato accanto allo slider, senza ricostruire la
+  // dashboard: così lo slider continuo non viene ricreato a metà trascinamento.
+  // La sincronizzazione completa (riepilogo + regola di allerta) avviene al
+  // salvataggio ("Salva soglie" → closePanel → renderClin).
+  const out=document.getElementById('thrval-'+k);
+  if(out) out.textContent='−'+thresholds[k]+'%';
+}
 
 function miniMetric(name,data,base,tone){
   return `<div class="card" style="padding:10px;">
@@ -2092,12 +2106,12 @@ function alertArea(p){
     html+=`<div class="card" style="padding:14px;margin-top:8px;">
       <div style="font-weight:700;font-size:13.5px;">Soglie di allerta per questo paziente</div>
       <div style="margin-top:12px;">
-        <div class="row-flex" style="font-size:12.5px;"><span>Soglia gialla — variazione vs baseline</span><span class="mono" style="color:var(--warn);font-weight:600;">−${thresholds.yellow}%</span></div>
-        <input type="range" min="5" max="20" value="${thresholds.yellow}" oninput="setThr('yellow',this.value)" aria-label="Soglia gialla">
+        <div class="row-flex" style="font-size:12.5px;"><span>Soglia gialla — variazione vs baseline</span><span class="mono" id="thrval-yellow" style="color:var(--warn);font-weight:600;">−${thresholds.yellow}%</span></div>
+        <input type="range" min="5" max="20" step="any" value="${thresholds.yellow}" oninput="setThr('yellow',this.value)" aria-label="Soglia gialla">
       </div>
       <div style="margin-top:10px;">
-        <div class="row-flex" style="font-size:12.5px;"><span>Soglia rossa</span><span class="mono" style="color:var(--alert);font-weight:600;">−${thresholds.red}%</span></div>
-        <input type="range" min="15" max="40" value="${thresholds.red}" oninput="setThr('red',this.value)" aria-label="Soglia rossa">
+        <div class="row-flex" style="font-size:12.5px;"><span>Soglia rossa</span><span class="mono" id="thrval-red" style="color:var(--alert);font-weight:600;">−${thresholds.red}%</span></div>
+        <input type="range" min="15" max="40" step="any" value="${thresholds.red}" oninput="setThr('red',this.value)" aria-label="Soglia rossa">
       </div>
       <div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;">Le soglie si applicano a tutti i domini; il segnale respiratorio (SBC, SpO₂) scatta indipendentemente.</div>
       <button class="btn small primary" style="margin-top:10px;" onclick="closePanel()">Salva soglie</button>
