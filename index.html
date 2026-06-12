@@ -499,7 +499,7 @@ function alignLoop(){
   if(a!=null){
     if(Math.abs(a)<=8){
       if(!armDrift.alignSince) armDrift.alignSince=now;
-      if(now-armDrift.alignSince>=700){ armBeep(660,0.12,0.25); armGo(); return; }
+      if(now-armDrift.alignSince>=3000){ armBeep(660,0.12,0.25); armGo(); return; }
     }else armDrift.alignSince=null;
   }
   updateAlign(a,false);
@@ -519,7 +519,12 @@ function updateAlign(a,simMode){
     dot.style.transform=`translateX(${x}px)`;
     dot.style.background=Math.abs(a)<=8?'var(--ok)':'var(--warn)';
   }
-  if(st) st.textContent=Math.abs(a)<=8?'perfetto: tieni fermo…':'inclina finché il punto è al centro';
+  if(st){
+    if(Math.abs(a)<=8){
+      const held=armDrift.alignSince?(performance.now()-armDrift.alignSince)/1000:0;
+      st.textContent='perfetto: tieni fermo… '+Math.max(1,Math.ceil(3-held));
+    }else st.textContent='inclina finché il punto è al centro';
+  }
 }
 
 /* allineamento riuscito: calibra lo zero sull'orizzontale e avvia la registrazione */
@@ -582,7 +587,7 @@ function armCard(){
         <div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">Motorio — arm drift e test di resistenza</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
-          Appoggia il telefono sul palmo, braccio teso in avanti all'altezza della spalla. Prima ti chiederemo di metterlo <b>in orizzontale</b>: quando è in piano la registrazione parte da sola, con un <b>bip ogni secondo</b> fino alla fine. Il test termina dopo ${armDrift.duration}s o appena il braccio cede (oltre 30°).
+          Appoggia il telefono sul palmo, braccio teso in avanti all'altezza della spalla. Prima ti chiederemo di metterlo <b>in orizzontale</b>: dopo 3 secondi in piano la registrazione parte da sola, con un <b>bip ogni secondo</b> fino alla fine. Il test termina dopo ${armDrift.duration}s o appena il braccio cede (oltre 30°).
         </div>
         ${(()=>{
           const fileProto = location.protocol==='file:';
@@ -601,7 +606,7 @@ function armCard(){
         <div aria-hidden="true" style="font-size:42px;margin-top:10px;">📱</div>
         <div style="margin-top:10px;font-weight:700;font-size:15px;">Metti il telefono in orizzontale</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
-          Appoggialo sul palmo con lo schermo verso l'alto, braccio teso in avanti all'altezza della spalla. Quando è in piano la registrazione parte da sola, con un bip ogni secondo.
+          Appoggialo sul palmo con lo schermo verso l'alto, braccio teso in avanti all'altezza della spalla. Tienilo in piano per 3 secondi: la registrazione parte da sola, con un bip ogni secondo.
         </div>
         <div style="margin:18px auto 6px;width:180px;">
           <div style="position:relative;height:26px;background:var(--line);border-radius:999px;">
@@ -1662,7 +1667,7 @@ function setRole(r){
   const btn=document.getElementById('roleBtn');
   btn.innerHTML=patient
     ? '<span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>'
-    : '<span class="ric" aria-hidden="true">🧍</span><span class="rlabel">Paziente</span>';
+    : '<span class="ric" aria-hidden="true">👤</span><span class="rlabel">Paziente</span>';
   const lbl=patient?'Passa alla vista medico':'Passa alla vista paziente';
   btn.setAttribute('aria-label',lbl);
   btn.setAttribute('title',lbl);
