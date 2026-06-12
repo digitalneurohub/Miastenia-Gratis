@@ -2,7 +2,7 @@
    Strategia: cache-first con aggiornamento in background.
    IMPORTANTE: quando aggiorni index.html, incrementa la versione qui sotto
    (v14 → v15 → …), altrimenti gli utenti continueranno a vedere la versione in cache. */
-const CACHE = 'mg-sense-v14';
+const CACHE = 'mg-sense-v15';
 const ASSETS = [
   './',
   './index.html',
@@ -12,12 +12,10 @@ const ASSETS = [
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png'
 ];
-
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
   self.skipWaiting();
 });
-
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
@@ -25,7 +23,6 @@ self.addEventListener('activate', e => {
       .then(() => self.clients.claim())
   );
 });
-
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
