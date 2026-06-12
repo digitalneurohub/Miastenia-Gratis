@@ -1295,15 +1295,32 @@ function ScreenRoutine(){
 /* ============ DASHBOARD MEDICO ============ */
 let selPatient=1, clinFilter='all', clinPanel=null;
 const thresholds={yellow:10,red:20};
-const alertLog=[{t:'ieri 18:42',txt:'Alert generato: indice bulbare −12% per 4 gg consecutivi + SBC in calo'}];
+const alertLog=[{t:'ieri 18:42',txt:'PZ-001: alert generato — indice bulbare −12% per 4 gg consecutivi + SBC in calo'}];
 function selectPatient(id){selPatient=id;clinPanel=null;renderClin();}
 const patients=[
-  {id:0,code:"PZ-001",flag:"alert",flagLabel:"Alert attivo",trend:D2,base:40,last:"2 h fa"},
-  {id:1,code:"PZ-002",flag:"warn",flagLabel:"Da rivedere",trend:D1,base:64,last:"5 h fa"},
-  {id:2,code:"PZ-003",flag:"ok",flagLabel:"Stabile",trend:D3,base:55,last:"1 g fa"},
-  {id:3,code:"PZ-004",flag:"ok",flagLabel:"Stabile",trend:D1,base:66,last:"1 g fa"},
-  {id:4,code:"PZ-005",flag:"neutral",flagLabel:"Bassa aderenza",trend:D3,base:54,last:"4 g fa"},
+  {id:0,code:"PZ-001",name:"Giulia B.",flag:"alert",flagLabel:"Alert attivo",trend:D2,base:40,last:"2 h fa",lastDiary:"ieri sera",
+   profile:"MG generalizzata anti-MuSK · classe IIIb MGFA · in follow-up da 14 mesi",
+   ind:[{k:"MG-ADL stimato",v:"9",d:"+4 pt",tone:"warn"},{k:"Indice bulbare",v:"↓",d:"−15%",tone:"warn"},{k:"Aderenza",v:"92%",d:"7gg",tone:"ok"}]},
+  {id:1,code:"PZ-002",name:"Maria R.",flag:"warn",flagLabel:"Da rivedere",trend:D1,base:64,last:"5 h fa",lastDiary:"ieri sera",
+   profile:"MG generalizzata anti-AChR · classe IIb MGFA · in follow-up da 8 mesi",
+   ind:[{k:"MG-ADL stimato",v:"5",d:"+1 pt",tone:"neutral"},{k:"Indice oculare",v:"↑",d:"+4%",tone:"neutral"},{k:"Aderenza",v:"86%",d:"7gg",tone:"ok"}]},
+  {id:2,code:"PZ-003",name:"Antonio F.",flag:"ok",flagLabel:"Stabile",trend:D3,base:55,last:"1 g fa",lastDiary:"ieri mattina",
+   profile:"MG oculare anti-AChR · classe I MGFA · in follow-up da 2 anni",
+   ind:[{k:"MG-ADL stimato",v:"2",d:"±0 pt",tone:"ok"},{k:"Indice oculare",v:"→",d:"+1%",tone:"ok"},{k:"Aderenza",v:"95%",d:"7gg",tone:"ok"}]},
+  {id:3,code:"PZ-004",name:"Lucia M.",flag:"ok",flagLabel:"Stabile",trend:D1,base:66,last:"1 g fa",lastDiary:"2 giorni fa",
+   profile:"MG generalizzata sieronegativa · classe IIa MGFA · in follow-up da 5 mesi",
+   ind:[{k:"MG-ADL stimato",v:"3",d:"−1 pt",tone:"ok"},{k:"Indice motorio",v:"→",d:"±0%",tone:"ok"},{k:"Aderenza",v:"88%",d:"7gg",tone:"ok"}]},
+  {id:4,code:"PZ-005",name:"Pietro C.",flag:"neutral",flagLabel:"Bassa aderenza",trend:D3,base:54,last:"4 g fa",lastDiary:"4 giorni fa",
+   profile:"MG generalizzata anti-AChR · timectomia 2024 · classe IIa MGFA · in follow-up da 1 anno",
+   ind:[{k:"MG-ADL stimato",v:"—",d:"dato di 4 gg fa",tone:"neutral"},{k:"Indice bulbare",v:"—",d:"dati insufficienti",tone:"neutral"},{k:"Aderenza",v:"38%",d:"7gg",tone:"alert"}]},
 ];
+function initials(name){const p=name.split(' ');return p[0][0]+'.'+(p[1]?p[1][0]+'.':'');}
+function msgFor(p){
+  const nome=p.name.split(' ')[0];
+  if(p.flag==='alert')  return `Buongiorno ${nome}, dai dati degli ultimi giorni notiamo un peggioramento bulbare. La contatteremo oggi per un controllo: nel frattempo ripeta il test guidato e il conteggio in un respiro questa sera.`;
+  if(p.flag==='neutral')return `Buongiorno ${nome}, non riceviamo le sue misurazioni da alcuni giorni. Quando può, riprenda la routine del mattino e della sera: ci aiuta a seguirla al meglio.`;
+  return `Buongiorno ${nome}, i suoi dati sono in ordine. Le ricordo il controllo programmato: continui pure con la routine abituale di misurazione.`;
+}
 const flagColor={alert:C.alert,warn:C.warn,ok:C.ok,neutral:C.inkSoft};
 
 function clinFiltered(){
@@ -1385,7 +1402,7 @@ function alertArea(p){
   if(clinPanel==='contact'){
     html+=`<div class="card" style="padding:14px;margin-bottom:8px;">
       <div style="font-weight:700;font-size:13.5px;">Messaggio al paziente</div>
-      <textarea rows="3" style="width:100%;margin-top:8px;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;">Buongiorno Maria, dai dati degli ultimi giorni notiamo un lieve peggioramento bulbare. La contatteremo oggi per un controllo: nel frattempo ripeta il test guidato e il conteggio in un respiro questa sera.</textarea>
+      <textarea rows="3" style="width:100%;margin-top:8px;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;">${msgFor(p)}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
         <button class="btn small primary" onclick="sendMsg()">Invia nell'app</button>
         <button class="btn small" onclick="logCall()">📞 Avvia chiamata</button>
@@ -1428,7 +1445,7 @@ function renderClin(){
     <div class="card" style="padding:12px;margin-bottom:8px;cursor:pointer;border-color:${selPatient===pt.id?'var(--primary)':'var(--line)'};border-width:${selPatient===pt.id?'2px':'1px'};border-left:4px solid ${flagColor[pt.flag]};" onclick="selectPatient(${pt.id})">
       <div style="display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:center;">
         <div>
-          <div class="mono" style="font-weight:600;font-size:14px;">${pt.code} · M.R.</div>
+          <div class="mono" style="font-weight:600;font-size:14px;">${pt.code} · ${initials(pt.name)}</div>
           <div style="font-size:11.5px;color:var(--inkSoft);margin-top:2px;">Ultimo dato: ${pt.last}</div>
         </div>
         ${spark(pt.trend,pt.base,flagColor[pt.flag],30,110)}
@@ -1440,11 +1457,7 @@ function renderClin(){
   const pills=[['all','Tutti'],['alert','Con alert'],['lowadh','Bassa aderenza']]
     .map(([k,l])=>`<button class="pill ${clinFilter===k?'active':''}" onclick="setFilter('${k}')">${l}</button>`).join('');
 
-  const indicators=[
-    {k:"MG-ADL stimato",v:"7",d:"+3 pt",tone:"warn"},
-    {k:"Indice bulbare",v:"↓",d:"−15%",tone:"warn"},
-    {k:"Aderenza",v:"86%",d:"7gg",tone:"ok"},
-  ].map(m=>`
+  const indicators=p.ind.map(m=>`
     <div class="card" style="padding:10px;background:var(--bg);">
       <div style="font-size:11.5px;color:var(--inkSoft);">${m.k}</div>
       <div class="mono" style="font-size:21px;font-weight:600;margin:4px 0 2px;">${m.v}</div>
@@ -1469,8 +1482,8 @@ function renderClin(){
         <div class="card" style="padding:18px;">
           <div class="row-flex">
             <div>
-              <div class="mono" style="font-size:17px;font-weight:700;">${p.code} · Maria R.</div>
-              <div style="font-size:12.5px;color:var(--inkSoft);margin-top:2px;">MG generalizzata anti-AChR · classe IIb MGFA · in follow-up da 8 mesi</div>
+              <div class="mono" style="font-size:17px;font-weight:700;">${p.code} · ${p.name}</div>
+              <div style="font-size:12.5px;color:var(--inkSoft);margin-top:2px;">${p.profile}</div>
             </div>
             <span class="badge ${p.flag}">${p.flagLabel}</span>
           </div>
@@ -1495,7 +1508,7 @@ function renderClin(){
                 ${miniMetric('Motorio — tenuta arm-drift (s)',D3,55,C.ok)}
                 ${miniMetric('Respiratorio — SBC',D4,45,C.warn)}
               </div>
-              <div class="seclabel">Ultimo diario MG-ADL (ieri sera)</div>
+              <div class="seclabel">Ultimo diario MG-ADL (${p.lastDiary})</div>
               <div class="card" style="padding:12px;font-size:12.5px;line-height:1.8;">
                 Deglutizione <b>2/3</b> · Voce <b>nasale a fine giornata (2/3)</b> · Ptosi/diplopia <b>1/3</b> · Alzarsi dalla sedia <b>1/3</b> · Igiene personale <b>1/3</b> · Respirazione <b>affanno da sforzo (1/3)</b> — totale <b>8/18</b>
               </div>
