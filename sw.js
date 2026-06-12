@@ -2,7 +2,7 @@
    Strategia: cache-first con aggiornamento in background.
    IMPORTANTE: quando aggiorni index.html, incrementa la versione qui sotto
    (v14 → v15 → …), altrimenti gli utenti continueranno a vedere la versione in cache. */
-const CACHE = 'mg-sense-v16';
+const CACHE = 'mg-sense-v19';
 const ASSETS = [
   './',
   './index.html',
