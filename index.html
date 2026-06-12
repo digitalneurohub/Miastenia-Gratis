@@ -258,7 +258,7 @@ function finishSession(){
 }
 function testNav(d){
   if(anyTestRunning()) return; // non navigare durante una misura
-  testStep=Math.max(0,Math.min(testSteps.length-1,testStep+d));render();
+  testStep=Math.max(0,Math.min(testSteps.length-1,testStep+d));render({top:true});
 }
 // Avviso comune per i sensori che richiedono getUserMedia (camera/microfono)
 function mediaNote(kind){
@@ -912,6 +912,7 @@ async function eyeStart(){
   Object.assign(eyeTest,{phase:'running', source:null, frames:[], gotFrames:0,
     t0:performance.now(), lastVideoTime:-1, modelReady:false, status:'caricamento modello…'});
   render(); // crea la card live con l'elemento <video>
+  scrollScreenToCard('eyeLive'); // porta il box del test appena sotto la topbar
 
   // 1) fotocamera
   try{
@@ -1855,7 +1856,7 @@ function diarioQOL(){
 
 /* --- Diario: contenitore con i due questionari (MG-ADL ePRO + MG-QOL15r) --- */
 let diarioTab='adl';   // 'adl' | 'qol'
-function setDiarioTab(t){diarioTab=t;render();}
+function setDiarioTab(t){diarioTab=t;render({top:true});}
 function ScreenEPRO(){
   const seg=(id,label,sub)=>`
     <button onclick="setDiarioTab('${id}')" aria-pressed="${diarioTab===id}"
@@ -2202,15 +2203,29 @@ const TABS=[
   {id:"routine",icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2.4"></circle><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>',label:"Routine",fn:ScreenRoutine},
 ];
 let currentTab="home";
-function setTab(id){stopAllTests();currentTab=id;render();}
-function render(){
+function setTab(id){stopAllTests();currentTab=id;render({top:true});}
+function render(opts){
+  const screen=document.getElementById('screen');
+  const prevScroll=screen?screen.scrollTop:0;
   const tab=TABS.find(t=>t.id===currentTab);
   document.getElementById('screen').innerHTML=tab.fn();
   document.getElementById('nav').innerHTML=TABS.map(t=>`
     <button class="${t.id===currentTab?'active':''}" onclick="setTab('${t.id}')" ${t.id===currentTab?'aria-current="page"':''}>
       <div class="ic">${t.icon}</div>${t.label}
     </button>`).join('');
-  document.getElementById('screen').scrollTop=0;
+  // Di default mantiene la posizione di scroll: cliccare i parametri dei
+  // questionari (che richiamano render) non deve più riportare in cima.
+  // Risale a 0 solo quando richiesto esplicitamente (cambio schermata/test).
+  document.getElementById('screen').scrollTop = (opts && opts.top) ? 0 : prevScroll;
+}
+/* Porta una card (es. il box del test) ad allinearsi appena sotto la topbar. */
+function scrollScreenToCard(id){
+  requestAnimationFrame(()=>{
+    const screen=document.getElementById('screen'), card=document.getElementById(id);
+    if(!screen || !card) return;
+    const s=screen.getBoundingClientRect(), c=card.getBoundingClientRect();
+    screen.scrollTop += (c.top - s.top);
+  });
 }
 let role='patient';
 function setRole(r){
