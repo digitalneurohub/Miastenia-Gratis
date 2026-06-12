@@ -131,6 +131,27 @@
 const D1=[62,64,61,66,65,69,71,70,74,73];  // oculare
 const D2=[40,41,39,38,40,37,35,36,33,34];  // bulbare
 const D3=[55,54,56,55,53,55,54,56,55,54];  // motorio
+const D4=[45,44,44,43,42,41,40,39,38,37];  // respiratorio: SBC in calo
+
+/* serie deterministiche per i range del trend (7g/30g/90g/1a) */
+function lcg(seed){let s=seed>>>0||1;return()=>((s=(s*1664525+1013904223)>>>0)/4294967296);}
+function genSeries(seed,n,start,end,noise){
+  const r=lcg(seed),a=[];
+  for(let i=0;i<n;i++){const t=n===1?0:i/(n-1);a.push(start+(end-start)*t+(r()-0.5)*2*noise);}
+  return a;
+}
+const trendCache={};
+function seriesFor(range){
+  if(trendCache[range])return trendCache[range];
+  const n={'7g':7,'30g':30,'90g':90,'1a':52}[range]||30;
+  return trendCache[range]={
+    ocul:genSeries(11,n,64,73,2.2),
+    bulb:genSeries(22,n,41,34,1.6),
+    mot: genSeries(33,n,55,55,1.4),
+    sbc: genSeries(44,n,45,37,1.2),
+    spo2:genSeries(55,n,97.2,96.3,0.45),
+  };
+}
 
 const C={primary:'#2E7D4F',alert:'#B3372E',warn:'#B07614',ok:'#2E7D4F',inkSoft:'#5A6E75'};
 
@@ -153,12 +174,12 @@ function spark(data,baseline,color,h=44,w=280){
 
 function ScreenHome(){
   const tasks=[
-    {label:"Test guidato MG — oculare, vocale e motorio",done:false,cta:"Inizia",go:"test"},
-    {label:"Diario MG-ADL — sintomi delle ultime 24h",done:true},
-    {label:"Single-breath count serale — funzione respiratoria",done:true},
+    {label:"Test guidato MG — oculare, vocale, motorio e respiratorio",done:false,cta:"Inizia",go:"test"},
+    {label:"Diario MG-ADL — sintomi delle ultime 24h",done:true,go:"epro"},
+    {label:"Single-breath count serale — funzione respiratoria",done:true,go:"test"},
   ];
   const taskHTML=tasks.map(t=>`
-    <div class="card" style="margin-bottom:8px;${t.done?'opacity:.6;':''}padding:12px;">
+    <div class="card" style="margin-bottom:8px;${t.done?'opacity:.6;':''}padding:12px;cursor:pointer;" onclick="setTab('${t.go}')">
       <div style="display:flex;align-items:center;gap:10px;">
         <div aria-hidden="true" style="width:22px;height:22px;border-radius:999px;flex-shrink:0;border:2px solid ${t.done?C.ok:'var(--line)'};background:${t.done?C.ok:'transparent'};color:#fff;font-size:13px;font-weight:700;display:grid;place-items:center;">${t.done?'✓':''}</div>
         <div style="flex:1;">${t.label}</div>
@@ -217,18 +238,20 @@ const testSteps=[
   {icon:"👁️",sensor:"Fotocamera",label:"Oculare — fatigability test dello sguardo in alto",hint:"Mantieni lo sguardo rivolto verso l'alto per 60 secondi guardando il punto in cima allo schermo. La fotocamera misura l'abbassamento progressivo della palpebra (ptosi) e l'eventuale comparsa di diplopia."},
   {icon:"🎙️",sensor:"Microfono",label:"Bulbare — lettura ad alta voce",hint:"Leggi il brano mostrato a voce normale. L'app analizza la voce (nasalità, pause, calo di intensità) per rilevare l'affaticamento bulbare e i primi segni di disartria o disfonia."},
   {icon:"💪",sensor:"Accelerometro / giroscopio",label:"Motorio — arm drift e test di resistenza",hint:"Tieni il telefono nella mano e mantieni il braccio teso in avanti finché riesci. I sensori misurano il tempo di tenuta, il tremore e la caduta progressiva dell'arto (debolezza prossimale affaticabile)."},
+  {icon:"🫁",sensor:"Microfono",label:"Respiratorio — single-breath count",hint:"Fai un respiro profondo e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. Il microfono misura la durata della fonazione, indicatore validato della riserva respiratoria nella MG."},
 ];
 function anyTestRunning(){
-  return eyeTest.phase==='running' || voiceTest.phase==='running' || armDrift.phase==='running';
+  return eyeTest.phase==='running' || voiceTest.phase==='running' || armDrift.phase==='running' || sbcTest.phase==='running';
 }
 function stopAllTests(){
   if(eyeTest.phase==='running') eyeStop(true);
   if(voiceTest.phase==='running') voiceStop(true);
   if(armDrift.phase==='running') armStop(true);
+  if(sbcTest.phase==='running') sbcStop(true);
 }
 function finishSession(){
   stopAllTests();
-  eyeTest.phase='idle'; voiceTest.phase='idle'; armDrift.phase='idle';
+  eyeTest.phase='idle'; voiceTest.phase='idle'; armDrift.phase='idle'; sbcTest.phase='idle';
   testStep=0;
   setTab('home');
 }
@@ -513,7 +536,7 @@ function armCard(){
       <div class="card" style="margin-top:12px;padding:12px;background:var(--${r.tone}Soft);border:none;font-size:13px;color:var(--${r.tone==='ok'?'ok':r.tone});line-height:1.5;">${r.txt}</div>
       <div style="display:flex;gap:10px;margin-top:14px;">
         <button class="btn full" onclick="armReset()">Ripeti</button>
-        <button class="btn full primary" onclick="finishSession()">Completa sessione</button>
+        <button class="btn full primary" onclick="testNav(1)">Continua</button>
       </div>
     </div>`;
 }
@@ -899,14 +922,174 @@ function voiceCard(){
     </div>`;
 }
 
+/* ============================================================
+   MODULO RESPIRATORIO — single-breath count con microfono
+   Misura la durata della fonazione continua in un solo respiro,
+   proxy validato della riserva respiratoria nella MG. Il test si
+   chiude da solo dopo 1,5 s di silenzio. Fallback simulato se il
+   microfono non è disponibile.
+   ============================================================ */
+const sbcTest={
+  phase:'idle', source:null, maxDur:40,
+  stream:null, actx:null, analyser:null, buf:null,
+  samples:[], level:0, started:false, startT:0, lastVoice:0,
+  phonation:0, lastSample:0, t0:0, raf:null,
+};
+function sbcPush(l){
+  if(performance.now()-sbcTest.lastSample<200) return;
+  sbcTest.lastSample=performance.now();
+  sbcTest.samples.push(l);
+}
+// logica comune a sensore reale e simulazione
+function sbcCore(){
+  const now=performance.now(), elapsed=(now-sbcTest.t0)/1000;
+  if(sbcTest.level>6){
+    if(!sbcTest.started){ sbcTest.started=true; sbcTest.startT=now; }
+    sbcTest.lastVoice=now;
+  }
+  if(sbcTest.started){
+    sbcTest.phonation=(sbcTest.lastVoice-sbcTest.startT)/1000;
+    if(now-sbcTest.lastVoice>1500){ sbcStop(); return; }   // fine del respiro
+  }else if(elapsed>12){ sbcStop(); return; }               // nessuna voce
+  sbcPush(sbcTest.level);
+  if(elapsed>=sbcTest.maxDur){ sbcStop(); return; }
+  updateSbcLive(elapsed);
+}
+function sbcTick(){
+  if(sbcTest.phase!=='running') return;
+  sbcTest.analyser.getByteTimeDomainData(sbcTest.buf);
+  let s=0;
+  for(let i=0;i<sbcTest.buf.length;i++){ const d=(sbcTest.buf[i]-128)/128; s+=d*d; }
+  sbcTest.level=Math.min(100,Math.sqrt(s/sbcTest.buf.length)*340);
+  sbcCore();
+}
+// Fallback: conteggio simulato che si esaurisce intorno ai 20 s
+function sbcTickSim(){
+  if(sbcTest.phase!=='running') return;
+  const e=(performance.now()-sbcTest.t0)/1000;
+  sbcTest.level = e<1 ? 2 : (e<20.5
+    ? Math.max(8,(30+18*Math.abs(Math.sin(e*5.1)))*(1-e/55)+(Math.random()-0.5)*8)
+    : 2);
+  sbcCore();
+}
+function updateSbcLive(elapsed){
+  const el=document.getElementById('sbcLive');
+  if(!el) return;
+  el.querySelector('#sbcTime').textContent=sbcTest.phonation.toFixed(1)+'s';
+  el.querySelector('#sbcBar').style.width=Math.min(100,elapsed/sbcTest.maxDur*100)+'%';
+  el.querySelector('#sbcVu').style.width=Math.min(100,sbcTest.level)+'%';
+  const st=el.querySelector('#sbcStatus');
+  if(st) st.textContent=sbcTest.source==='sim'
+    ? 'demo simulata'
+    : (sbcTest.started ? 'fonazione in corso… continua a contare' : 'fai un respiro profondo e inizia a contare');
+  const sl=el.querySelector('#sbcSpark');
+  if(sl && sbcTest.samples.length>1) sl.innerHTML=spark(sbcTest.samples,null,C.primary,50,300);
+}
+function sbcFreeHW(){
+  if(sbcTest.raf){ clearInterval(sbcTest.raf); sbcTest.raf=null; }
+  if(sbcTest.stream){ sbcTest.stream.getTracks().forEach(t=>t.stop()); sbcTest.stream=null; }
+  if(sbcTest.actx){ sbcTest.actx.close().catch(()=>{}); sbcTest.actx=null; }
+  sbcTest.analyser=null;
+}
+async function sbcStart(){
+  Object.assign(sbcTest,{phase:'running',source:null,samples:[],level:0,started:false,phonation:0,lastSample:0,t0:performance.now()});
+  render();
+  try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no-media');
+    sbcTest.stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    sbcTest.source='mic';
+    const AC=window.AudioContext||window.webkitAudioContext;
+    sbcTest.actx=new AC();
+    await sbcTest.actx.resume().catch(()=>{});
+    sbcTest.analyser=sbcTest.actx.createAnalyser();
+    sbcTest.analyser.fftSize=2048;
+    sbcTest.actx.createMediaStreamSource(sbcTest.stream).connect(sbcTest.analyser);
+    sbcTest.buf=new Uint8Array(sbcTest.analyser.fftSize);
+    sbcTest.t0=performance.now();
+    sbcTest.raf=setInterval(sbcTick,50);
+    render();
+  }catch(_){
+    sbcTest.source='sim'; sbcTest.t0=performance.now();
+    sbcTest.raf=setInterval(sbcTickSim,50);
+    render();
+  }
+}
+function sbcStop(abort){
+  sbcFreeHW();
+  sbcTest.phase=abort===true?'idle':'done';
+  render();
+}
+function sbcReset(){ sbcTest.phase='idle'; sbcTest.samples=[]; render(); }
+
+function sbcInterpret(){
+  const t=sbcTest.phonation, count=Math.round(t*1.8);
+  if(!sbcTest.started || t<2) return {tone:'warn',txt:'Voce non rilevata: ripeti il test in ambiente silenzioso, contando a voce normale verso il telefono.',count:0};
+  if(t>=22) return {tone:'ok',txt:`Fonazione prolungata (SBC stimato ≈ ${count}): riserva respiratoria conservata.`,count};
+  if(t>=12) return {tone:'warn',txt:`Fonazione ridotta (SBC stimato ≈ ${count}): riserva respiratoria da monitorare, ripeti il test stasera.`,count};
+  return {tone:'alert',txt:`Fonazione molto breve (SBC stimato ≈ ${count}): possibile coinvolgimento respiratorio — contatta il centro di riferimento.`,count};
+}
+
+function sbcCard(){
+  const s=testSteps[3];
+  if(sbcTest.phase==='idle'){
+    return `
+      <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
+        <div aria-hidden="true" style="font-size:44px;">${s.icon}</div>
+        <div style="margin-top:10px;"><span class="badge neutral">${s.sensor}</span></div>
+        <div style="margin-top:12px;font-weight:700;font-size:15px;">${s.label}</div>
+        <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">${s.hint} Il test termina da solo quando ti fermi.</div>
+        ${mediaNote('Il microfono')}
+        <button class="btn primary full" style="margin-top:16px;" onclick="sbcStart()">Avvia test respiratorio</button>
+      </div>`;
+  }
+  if(sbcTest.phase==='running'){
+    return `
+      <div class="card" id="sbcLive" style="margin-top:16px;padding:18px;">
+        <div class="row-flex"><span class="badge alert">● registrazione in corso</span><span class="mono" style="font-weight:600;">max ${sbcTest.maxDur}s</span></div>
+        <div style="height:6px;background:var(--line);border-radius:999px;margin-top:10px;"><div id="sbcBar" style="width:0%;height:100%;background:var(--primary);border-radius:999px;"></div></div>
+        <div id="sbcStatus" style="font-size:11px;color:var(--inkSoft);margin-top:6px;text-align:center;">avvio microfono…</div>
+
+        <div style="text-align:center;margin:16px 0 4px;">
+          <div class="mono" id="sbcTime" style="font-size:38px;font-weight:600;color:var(--primary);">0.0s</div>
+          <div style="font-size:11px;color:var(--inkSoft);">durata della fonazione</div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <div style="font-size:11px;color:var(--inkSoft);">intensità vocale</div>
+          <div style="height:10px;background:var(--line);border-radius:999px;margin-top:4px;overflow:hidden;"><div id="sbcVu" style="width:0%;height:100%;background:linear-gradient(90deg,var(--ok),var(--warn));border-radius:999px;transition:width .08s;"></div></div>
+        </div>
+
+        <div id="sbcSpark" style="margin-top:10px;"></div>
+        <button class="btn full" style="margin-top:16px;" onclick="sbcStop()">Termina ora</button>
+      </div>`;
+  }
+  const r=sbcInterpret();
+  return `
+    <div class="card" style="margin-top:16px;padding:18px;">
+      <div class="row-flex"><div style="font-weight:700;font-size:15px;">Risultato — single-breath count</div><span class="badge ${r.tone}">${r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato'}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;">
+        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">${sbcTest.phonation.toFixed(1)}s</div><div style="font-size:11px;color:var(--inkSoft);">fonazione</div></div>
+        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">≈${r.count}</div><div style="font-size:11px;color:var(--inkSoft);">SBC stimato</div></div>
+        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">≥40</div><div style="font-size:11px;color:var(--inkSoft);">riferimento</div></div>
+      </div>
+      ${sbcTest.samples.length>1?`<div style="margin-top:12px;">${spark(sbcTest.samples,null,C.primary,50,300)}</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">intensità vocale durante il conteggio</div>`:''}
+      <div class="card" style="margin-top:12px;padding:12px;background:var(--${r.tone}Soft);border:none;font-size:13px;color:var(--${r.tone==='ok'?'ok':r.tone});line-height:1.5;">${r.txt}</div>
+      <div style="font-size:11px;color:var(--inkSoft);margin-top:8px;">Conteggio stimato dalla durata della fonazione (~1,8 numeri/s); per il valore esatto annota il numero raggiunto.</div>
+      <div style="display:flex;gap:10px;margin-top:14px;">
+        <button class="btn full" onclick="sbcReset()">Ripeti</button>
+        <button class="btn full primary" onclick="finishSession()">Completa sessione</button>
+      </div>
+    </div>`;
+}
+
 function ScreenTest(){
   const pct=Math.round(((testStep+1)/testSteps.length)*100);
-  const cards=[eyeCard,voiceCard,armCard];
-  const phases=[eyeTest.phase,voiceTest.phase,armDrift.phase];
+  const cards=[eyeCard,voiceCard,armCard,sbcCard];
+  const phases=[eyeTest.phase,voiceTest.phase,armDrift.phase,sbcTest.phase];
   const idle=phases[testStep]==='idle';
   return `
     <div style="font-size:19px;font-weight:700;">Rilevazione guidata</div>
-    <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Sessione MG-Sense completa · durata stimata ~4 min</div>
+    <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Sessione MG-Sense completa · 4 domini · durata stimata ~5 min</div>
 
     <div style="margin:16px 0 6px;display:flex;justify-content:space-between;font-size:12px;color:var(--inkSoft);">
       <span>Passo ${testStep+1} di ${testSteps.length}</span>
@@ -924,83 +1107,142 @@ function ScreenTest(){
       <button class="btn full primary" onclick="${testStep===testSteps.length-1?'finishSession()':'testNav(1)'}">${testStep===testSteps.length-1?'Completa':'Avanti'}</button>
     </div>`}
     <div style="text-align:center;margin-top:10px;font-size:12px;color:var(--inkSoft);">
-      I dati dei sensori sono elaborati sul dispositivo: al server vengono inviati solo i parametri estratti (apertura palpebrale, indici vocali, tenuta/drift/tremore), mai video, audio o segnali grezzi.
+      I dati dei sensori sono elaborati sul dispositivo: al server vengono inviati solo i parametri estratti (apertura palpebrale, indici vocali, tenuta/drift/tremore, durata di fonazione), mai video, audio o segnali grezzi.
     </div>
   `;
 }
 
 /* --- Diario ePRO (MG-ADL) --- */
-let epro={v1:5,v2:3,choice:null};
+let epro={v1:5,v2:3,choice:null,more:false,v4:2,v5:1,breath:null,sent:false};
+const VOICE_OPTS=["Normale","Lievemente nasale/debole","Nasale a fine giornata","Difficile da capire"];
+const BREATH_OPTS=["Normale","Affanno da sforzo","Affanno a riposo","Necessità di supporto"];
 function setV(k,val){epro[k]=+val;render();}
 function setChoice(o){epro.choice=o;render();}
+function setBreath(o){epro.breath=o;render();}
+function eproMore(){epro.more=true;render();}
+function eproSend(){epro.sent=true;render();}
+function eproEdit(){epro.sent=false;render();}
+function eproScore(){
+  const sl=v=>Math.round(v/10*3);                       // slider 0–10 → voce MG-ADL 0–3
+  let score=sl(epro.v1)+sl(epro.v2)+Math.max(0,VOICE_OPTS.indexOf(epro.choice));
+  let n=3;
+  if(epro.more){
+    score+=sl(epro.v4)+sl(epro.v5)+Math.max(0,BREATH_OPTS.indexOf(epro.breath));
+    n=6;
+  }
+  return {score,max:n*3,n};
+}
+function pillRow(opts,sel,fn){
+  return opts.map(o=>`<button class="pill ${sel===o?'active':''}" onclick="${fn}('${o.replace(/'/g,"\\'")}')">${o}</button>`).join('');
+}
+function sliderQ(k,q,minL,maxL){
+  return `
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;line-height:1.5;">${q}</div>
+      <input type="range" min="0" max="10" value="${epro[k]}" oninput="setV('${k}',this.value)" style="margin-top:14px;" aria-label="${q}">
+      <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--inkSoft);">
+        <span>${minL}</span>
+        <span class="mono" style="font-weight:600;color:var(--primary);">${epro[k]}</span>
+        <span>${maxL}</span>
+      </div>
+    </div>`;
+}
 function ScreenEPRO(){
-  const opts=["Normale","Lievemente nasale/debole","Nasale a fine giornata","Difficile da capire"];
-  const optHTML=opts.map(o=>`<button class="pill ${epro.choice===o?'active':''}" onclick="setChoice('${o.replace(/'/g,"\\'")}')">${o}</button>`).join('');
+  if(epro.sent){
+    const s=eproScore();
+    return `
+      <div style="font-size:19px;font-weight:700;">Questionario</div>
+      <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Diario MG-ADL digitale · ultime 24 ore</div>
+      <div class="card" style="margin-top:20px;padding:22px;text-align:center;border-left:4px solid var(--ok);">
+        <div aria-hidden="true" style="width:52px;height:52px;border-radius:999px;background:var(--ok);color:#fff;font-size:26px;display:grid;place-items:center;margin:0 auto;">✓</div>
+        <div style="margin-top:12px;font-weight:700;font-size:16px;">Risposte inviate</div>
+        <div class="mono" style="margin-top:14px;font-size:30px;font-weight:600;color:var(--primary);">${s.score}<span style="font-size:16px;color:var(--inkSoft);">/${s.max}</span></div>
+        <div style="font-size:12px;color:var(--inkSoft);">MG-ADL stimato su ${s.n} voci compilate</div>
+        <div style="margin-top:14px;font-size:13px;color:var(--inkSoft);line-height:1.55;">
+          Il punteggio entra nel tuo storico e sarà visibile al neurologo insieme ai dati dei sensori. Se i sintomi peggiorano nelle prossime ore, ripeti il test guidato.
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;">
+        <button class="btn full" onclick="eproEdit()">Modifica risposte</button>
+        <button class="btn full primary" onclick="setTab('home')">Torna alla Home</button>
+      </div>`;
+  }
+  const moreBlock = epro.more ? `
+    <div class="seclabel">Funzioni motorie e respiratorie — voci aggiuntive</div>
+    ${sliderQ('v4',"Q4. Quanta difficoltà hai avuto ad alzarti da una sedia?","nessuna","impossibile da solo")}
+    ${sliderQ('v5',"Q5. Quanta difficoltà a lavarti i denti o pettinarti?","nessuna","impossibile")}
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;line-height:1.5;">Q6. Com'è stata la tua respirazione oggi?</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${pillRow(BREATH_OPTS,epro.breath,'setBreath')}</div>
+    </div>`
+  : `
+    <button class="card" style="width:100%;padding:12px;border-style:dashed;color:var(--primary);font-size:13px;text-align:center;font-weight:600;" onclick="eproMore()">
+      + Aggiungi le altre voci MG-ADL: alzarsi dalla sedia, lavarsi/pettinarsi, respirazione
+    </button>`;
   return `
     <div style="font-size:19px;font-weight:700;">Questionario</div>
     <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Diario MG-ADL digitale · periodo di riferimento: ultime 24 ore</div>
 
     <div class="seclabel">Funzioni bulbari — deglutizione e parola</div>
-    <div class="card" style="margin-bottom:10px;">
-      <div style="font-size:14px;font-weight:600;line-height:1.5;">Q1. Quanta difficoltà hai avuto oggi a masticare e deglutire?</div>
-      <input type="range" min="0" max="10" value="${epro.v1}" oninput="setV('v1',this.value)" style="margin-top:14px;" aria-label="Difficoltà a deglutire">
-      <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--inkSoft);">
-        <span>nessuna difficoltà</span>
-        <span class="mono" style="font-weight:600;color:var(--primary);">${epro.v1}</span>
-        <span>solo con sondino</span>
-      </div>
-    </div>
+    ${sliderQ('v1',"Q1. Quanta difficoltà hai avuto oggi a masticare e deglutire?","nessuna difficoltà","solo con sondino")}
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:14px;font-weight:600;line-height:1.5;">Q2. Com'è stata la tua voce nel corso della giornata?</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${optHTML}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${pillRow(VOICE_OPTS,epro.choice,'setChoice')}</div>
     </div>
 
-    <div class="seclabel">Funzioni oculari e motorie — visione e forza degli arti</div>
-    <div class="card" style="margin-bottom:10px;">
-      <div style="font-size:14px;font-weight:600;line-height:1.5;">Q3. Quanto ti hanno disturbato oggi la palpebra cadente o la visione doppia?</div>
-      <input type="range" min="0" max="10" value="${epro.v2}" oninput="setV('v2',this.value)" style="margin-top:14px;" aria-label="Sintomi oculari">
-      <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--inkSoft);">
-        <span>per nulla</span>
-        <span class="mono" style="font-weight:600;color:var(--primary);">${epro.v2}</span>
-        <span>moltissimo</span>
-      </div>
-    </div>
-    <div class="card" style="padding:12px;border-style:dashed;color:var(--inkSoft);font-size:13px;text-align:center;">
-      + Altre voci MG-ADL: alzarsi dalla sedia, lavarsi/pettinarsi i capelli, respirazione
-    </div>
+    <div class="seclabel">Funzioni oculari — visione</div>
+    ${sliderQ('v2',"Q3. Quanto ti hanno disturbato oggi la palpebra cadente o la visione doppia?","per nulla","moltissimo")}
 
-    <div style="margin-top:16px;"><button class="btn primary full">Invia risposte</button></div>
+    ${moreBlock}
+
+    <div style="margin-top:16px;"><button class="btn primary full" onclick="eproSend()">Invia risposte</button></div>
   `;
 }
 
 /* --- Trend --- */
-let trendRange="30g";
+let trendRange="30g", trendResp=false;
 function setRange(r){trendRange=r;render();}
-function ScreenTrend(){
-  const metrics=[
-    {name:"Apertura palpebrale — fatigability oculare",data:D1,base:64,tone:C.primary,delta:"+4%",badge:"neutral"},
-    {name:"Indice vocale bulbare — nasalità/pause",data:D2,base:40,tone:C.alert,delta:"−15%",badge:"warn"},
-    {name:"Tenuta arm-drift — forza prossimale (s)",data:D3,base:55,tone:C.ok,delta:"±0%",badge:"ok"},
-  ];
-  const ranges=["7g","30g","90g","1a"];
-  const rangeHTML=ranges.map(r=>`<button onclick="setRange('${r}')" style="flex:1;padding:7px 0;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid ${trendRange===r?'var(--primary)':'var(--line)'};background:${trendRange===r?'var(--primary)':'var(--card)'};color:${trendRange===r?'#fff':'var(--inkSoft)'};">${r}</button>`).join('');
-  const metHTML=metrics.map(m=>`
+function toggleResp(){trendResp=!trendResp;render();}
+function deltaBadge(data,base){
+  const last=data.slice(-3).reduce((a,b)=>a+b,0)/Math.min(3,data.length);
+  const d=(last-base)/base*100;
+  const s=Math.abs(d)<1?'±0%':(d>0?'+':'−')+Math.abs(d).toFixed(0)+'%';
+  const b=d<=-8?'warn':(Math.abs(d)<4?'ok':'neutral');
+  return {s,b};
+}
+function metricCard(name,data,base,tone){
+  const d=deltaBadge(data,base);
+  return `
     <div class="card" style="margin-bottom:10px;">
       <div class="row-flex" style="margin-bottom:6px;">
-        <span style="font-size:12.5px;color:var(--inkSoft);">${m.name}</span>
-        <span class="badge ${m.badge}">${m.delta} vs baseline</span>
+        <span style="font-size:12.5px;color:var(--inkSoft);">${name}</span>
+        <span class="badge ${d.b}">${d.s} vs baseline</span>
       </div>
-      ${spark(m.data,m.base,m.tone)}
+      ${spark(data,base,tone)}
       <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--inkSoft);" class="mono"><span>−${trendRange}</span><span>oggi</span></div>
-    </div>`).join('');
+    </div>`;
+}
+function ScreenTrend(){
+  const S=seriesFor(trendRange);
+  const ranges=["7g","30g","90g","1a"];
+  const rangeHTML=ranges.map(r=>`<button onclick="setRange('${r}')" style="flex:1;padding:7px 0;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid ${trendRange===r?'var(--primary)':'var(--line)'};background:${trendRange===r?'var(--primary)':'var(--card)'};color:${trendRange===r?'#fff':'var(--inkSoft)'};">${r}</button>`).join('');
+  const respBlock = trendResp ? `
+    <div class="seclabel">Dominio respiratorio</div>
+    ${metricCard("Single-breath count — conteggio in un respiro",S.sbc,45,C.warn)}
+    ${metricCard("SpO₂ notturna media (%)",S.spo2,97,C.ok)}
+    <button class="card" style="width:100%;padding:10px;border-style:dashed;color:var(--inkSoft);font-size:12.5px;text-align:center;" onclick="toggleResp()">Nascondi dominio respiratorio ▴</button>`
+  : `
+    <button class="card" style="width:100%;padding:12px;border-style:dashed;color:var(--primary);font-weight:600;font-size:13px;text-align:center;" onclick="toggleResp()">
+      + Dominio respiratorio: single-breath count, SpO₂ notturna ▾
+    </button>`;
   return `
     <div style="font-size:19px;font-weight:700;">Storico e trend</div>
     <div style="display:flex;gap:6px;margin:12px 0 4px;">${rangeHTML}</div>
     <div class="seclabel">Metriche · confronto con baseline personale</div>
-    ${metHTML}
-    <div class="card" style="padding:12px;border-style:dashed;color:var(--inkSoft);font-size:13px;text-align:center;">
-      + Dominio respiratorio: single-breath count, SpO₂, frequenza respiratoria notturna
-    </div>
+    ${metricCard("Apertura palpebrale — fatigability oculare",S.ocul,64,C.primary)}
+    ${metricCard("Indice vocale bulbare — nasalità/pause",S.bulb,40,C.alert)}
+    ${metricCard("Tenuta arm-drift — forza prossimale (s)",S.mot,55,C.ok)}
+    ${respBlock}
   `;
 }
 
@@ -1051,8 +1293,10 @@ function ScreenRoutine(){
 }
 
 /* ============ DASHBOARD MEDICO ============ */
-let selPatient=1;
-function selectPatient(id){selPatient=id;renderClin();}
+let selPatient=1, clinFilter='all', clinPanel=null;
+const thresholds={yellow:10,red:20};
+const alertLog=[{t:'ieri 18:42',txt:'Alert generato: indice bulbare −12% per 4 gg consecutivi + SBC in calo'}];
+function selectPatient(id){selPatient=id;clinPanel=null;renderClin();}
 const patients=[
   {id:0,code:"PZ-001",flag:"alert",flagLabel:"Alert attivo",trend:D2,base:40,last:"2 h fa"},
   {id:1,code:"PZ-002",flag:"warn",flagLabel:"Da rivedere",trend:D1,base:64,last:"5 h fa"},
@@ -1061,9 +1305,126 @@ const patients=[
   {id:4,code:"PZ-005",flag:"neutral",flagLabel:"Bassa aderenza",trend:D3,base:54,last:"4 g fa"},
 ];
 const flagColor={alert:C.alert,warn:C.warn,ok:C.ok,neutral:C.inkSoft};
-function renderClin(){
+
+function clinFiltered(){
+  if(clinFilter==='alert')  return patients.filter(p=>p.flag==='alert');
+  if(clinFilter==='lowadh') return patients.filter(p=>p.flag==='neutral');
+  return patients;
+}
+function setFilter(f){
+  clinFilter=f;
+  const list=clinFiltered();
+  if(list.length && !list.some(p=>p.id===selPatient)) selPatient=list[0].id;
+  renderClin();
+}
+function openPanel(p){clinPanel=clinPanel===p?null:p;renderClin();}
+function closePanel(){clinPanel=null;renderClin();}
+function logAction(txt){
+  const d=new Date();
+  alertLog.unshift({t:'oggi '+d.toTimeString().slice(0,5),txt});
+}
+function resolveAlert(mode){
   const p=patients.find(x=>x.id===selPatient);
-  const list=patients.map(pt=>`
+  if(mode==='handled'){
+    p.flag='warn'; p.flagLabel='Da rivedere';
+    logAction(`${p.code}: alert preso in carico, stato declassato a «Da rivedere»`);
+  }else{
+    logAction(`${p.code}: richiesta di visita prioritaria inviata alla segreteria`);
+  }
+  clinPanel=null; renderClin();
+}
+function sendMsg(){
+  const p=patients.find(x=>x.id===selPatient);
+  logAction(`${p.code}: messaggio inviato al paziente nell'app`);
+  clinPanel=null; renderClin();
+}
+function logCall(){
+  const p=patients.find(x=>x.id===selPatient);
+  logAction(`${p.code}: chiamata avviata (demo)`);
+  clinPanel=null; renderClin();
+}
+function setThr(k,v){thresholds[k]=+v;renderClin();}
+
+function miniMetric(name,data,base,tone){
+  return `<div class="card" style="padding:10px;">
+    <div style="font-size:11.5px;color:var(--inkSoft);margin-bottom:4px;">${name}</div>
+    ${spark(data,base,tone,36,190)}
+  </div>`;
+}
+
+function alertArea(p){
+  let html='';
+  if(p.flag==='alert'){
+    html+=`<div class="card" style="padding:12px;background:var(--alertSoft);border:1px solid var(--alert);margin-bottom:8px;">
+      <div style="font-size:13px;font-weight:600;color:var(--alert);">⚠ Indice bulbare in calo da 4 giorni consecutivi associato a riduzione del single-breath count: possibile peggioramento — valutare rischio di crisi miastenica</div>
+      <div style="font-size:12px;color:var(--inkSoft);margin-top:4px;">Regola: <span class="mono">se indice bulbare &lt; −${thresholds.yellow}% baseline per ≥3 gg <b>e</b> SBC in calo → alert rosso</span></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn small primary" onclick="openPanel('alert')">Gestisci alert</button>
+        <button class="btn small" onclick="openPanel('contact')">Contatta paziente</button>
+      </div>
+    </div>`;
+  }else{
+    html+=`<div class="card" style="padding:12px;background:var(--okSoft);border:none;margin-bottom:8px;font-size:13px;color:var(--ok);">
+      <div class="row-flex" style="flex-wrap:wrap;gap:8px;">
+        <span>✓ Nessun alert attivo per questo paziente</span>
+        <button class="btn small" onclick="openPanel('contact')">Contatta paziente</button>
+      </div>
+    </div>`;
+  }
+  if(clinPanel==='alert'){
+    html+=`<div class="card" style="padding:14px;margin-bottom:8px;">
+      <div style="font-weight:700;font-size:13.5px;">Gestione alert</div>
+      <div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;line-height:1.5;">L'azione scelta viene registrata nel diario clinico del paziente.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+        <button class="btn small" onclick="resolveAlert('handled')">✓ Presa in carico — declassa a «Da rivedere»</button>
+        <button class="btn small" onclick="resolveAlert('visit')">📅 Richiedi visita prioritaria in ambulatorio</button>
+        <button class="btn small" onclick="closePanel()">Annulla</button>
+      </div>
+    </div>`;
+  }
+  if(clinPanel==='contact'){
+    html+=`<div class="card" style="padding:14px;margin-bottom:8px;">
+      <div style="font-weight:700;font-size:13.5px;">Messaggio al paziente</div>
+      <textarea rows="3" style="width:100%;margin-top:8px;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;">Buongiorno Maria, dai dati degli ultimi giorni notiamo un lieve peggioramento bulbare. La contatteremo oggi per un controllo: nel frattempo ripeta il test guidato e il conteggio in un respiro questa sera.</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn small primary" onclick="sendMsg()">Invia nell'app</button>
+        <button class="btn small" onclick="logCall()">📞 Avvia chiamata</button>
+        <button class="btn small" onclick="closePanel()">Annulla</button>
+      </div>
+    </div>`;
+  }
+  html+=`<button class="card" style="width:100%;text-align:left;padding:12px;border-style:dashed;font-size:12.5px;color:var(--inkSoft);" onclick="openPanel('soglie')">
+    Configurazione soglie: variazione gialla −${thresholds.yellow}% / rossa −${thresholds.red}% o segnale respiratorio per ciascun dominio — tocca per modificare ${clinPanel==='soglie'?'▴':'▾'}
+  </button>`;
+  if(clinPanel==='soglie'){
+    html+=`<div class="card" style="padding:14px;margin-top:8px;">
+      <div style="font-weight:700;font-size:13.5px;">Soglie di allerta per questo paziente</div>
+      <div style="margin-top:12px;">
+        <div class="row-flex" style="font-size:12.5px;"><span>Soglia gialla — variazione vs baseline</span><span class="mono" style="color:var(--warn);font-weight:600;">−${thresholds.yellow}%</span></div>
+        <input type="range" min="5" max="20" value="${thresholds.yellow}" oninput="setThr('yellow',this.value)" aria-label="Soglia gialla">
+      </div>
+      <div style="margin-top:10px;">
+        <div class="row-flex" style="font-size:12.5px;"><span>Soglia rossa</span><span class="mono" style="color:var(--alert);font-weight:600;">−${thresholds.red}%</span></div>
+        <input type="range" min="15" max="40" value="${thresholds.red}" oninput="setThr('red',this.value)" aria-label="Soglia rossa">
+      </div>
+      <div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;">Le soglie si applicano a tutti i domini; il segnale respiratorio (SBC, SpO₂) scatta indipendentemente.</div>
+      <button class="btn small primary" style="margin-top:10px;" onclick="closePanel()">Salva soglie</button>
+    </div>`;
+  }
+  const logHTML=alertLog.slice(0,4).map(l=>`
+    <div style="display:flex;gap:10px;font-size:12px;padding:7px 2px;border-bottom:1px solid var(--line);">
+      <span class="mono" style="color:var(--inkSoft);white-space:nowrap;">${l.t}</span><span>${l.txt}</span>
+    </div>`).join('');
+  html+=`<div class="seclabel">Registro azioni</div><div class="card" style="padding:6px 12px;">${logHTML||'<div style="font-size:12px;color:var(--inkSoft);padding:6px 0;">Nessuna azione registrata.</div>'}</div>`;
+  return html;
+}
+
+function renderClin(){
+  const p=patients.find(x=>x.id===selPatient)||patients[0];
+  const shown=clinFiltered();
+  const nA=patients.filter(x=>x.flag==='alert').length;
+  const nW=patients.filter(x=>x.flag==='warn').length;
+  const list=shown.length?shown.map(pt=>`
     <div class="card" style="padding:12px;margin-bottom:8px;cursor:pointer;border-color:${selPatient===pt.id?'var(--primary)':'var(--line)'};border-width:${selPatient===pt.id?'2px':'1px'};border-left:4px solid ${flagColor[pt.flag]};" onclick="selectPatient(${pt.id})">
       <div style="display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:center;">
         <div>
@@ -1073,7 +1434,11 @@ function renderClin(){
         ${spark(pt.trend,pt.base,flagColor[pt.flag],30,110)}
         <span class="badge ${pt.flag}">${pt.flagLabel}</span>
       </div>
-    </div>`).join('');
+    </div>`).join('')
+    :`<div class="card" style="padding:14px;border-style:dashed;color:var(--inkSoft);font-size:13px;text-align:center;">Nessun paziente in questa categoria.</div>`;
+
+  const pills=[['all','Tutti'],['alert','Con alert'],['lowadh','Bassa aderenza']]
+    .map(([k,l])=>`<button class="pill ${clinFilter===k?'active':''}" onclick="setFilter('${k}')">${l}</button>`).join('');
 
   const indicators=[
     {k:"MG-ADL stimato",v:"7",d:"+3 pt",tone:"warn"},
@@ -1092,15 +1457,11 @@ function renderClin(){
         <div class="row-flex" style="margin-bottom:10px;">
           <div style="font-size:17px;font-weight:700;">Pazienti in follow-up · ${patients.length}</div>
           <div style="display:flex;gap:6px;">
-            <span class="badge alert">1 alert</span>
-            <span class="badge warn">1 da rivedere</span>
+            ${nA?`<span class="badge alert">${nA} alert</span>`:''}
+            ${nW?`<span class="badge warn">${nW} da rivedere</span>`:''}
           </div>
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:10px;">
-          <button class="pill active">Tutti</button>
-          <button class="pill">Con alert</button>
-          <button class="pill">Bassa aderenza</button>
-        </div>
+        <div style="display:flex;gap:6px;margin-bottom:10px;">${pills}</div>
         ${list}
       </div>
 
@@ -1122,23 +1483,22 @@ function renderClin(){
           <div style="font-size:11.5px;color:var(--inkSoft);margin-top:4px;">Linea tratteggiata = baseline personale · media delle prime 2 settimane in fase stabile</div>
 
           <div class="seclabel">Alert attivi e soglie</div>
-          <div class="card" style="padding:12px;background:var(--alertSoft);border:1px solid var(--alert);margin-bottom:8px;">
-            <div style="font-size:13px;font-weight:600;color:var(--alert);">⚠ Indice bulbare in calo da 4 giorni consecutivi associato a riduzione del single-breath count: possibile peggioramento — valutare rischio di crisi miastenica</div>
-            <div style="font-size:12px;color:var(--inkSoft);margin-top:4px;">Regola: <span class="mono">se indice bulbare &lt; −10% baseline per ≥3 gg <b>e</b> SBC in calo → alert rosso</span></div>
-            <div style="display:flex;gap:8px;margin-top:10px;">
-              <button class="btn small primary">Gestisci alert</button>
-              <button class="btn small">Contatta paziente</button>
-            </div>
-          </div>
-          <div class="card" style="padding:12px;border-style:dashed;font-size:12.5px;color:var(--inkSoft);">
-            Configurazione soglie: variazione gialla −10% / rossa −20% o segnale respiratorio per ciascun dominio — personalizzabili per paziente
-          </div>
+          ${alertArea(p)}
 
           <div class="seclabel">Approfondimento (on demand)</div>
           <details>
             <summary>Mostra tutte le metriche e i questionari ▾</summary>
-            <div style="margin-top:10px;font-size:13px;color:var(--inkSoft);line-height:1.7;">
-              Vista completa: tutti i domini (oculare, bulbare, motorio, respiratorio), risposte MG-ADL voce per voce, dati grezzi dei test con sensori e tracciato SpO₂ notturno — caricati solo su richiesta per evitare il sovraccarico informativo durante la visita.
+            <div style="margin-top:12px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                ${miniMetric('Oculare — apertura palpebrale',D1,64,C.primary)}
+                ${miniMetric('Bulbare — indice vocale',D2,40,C.alert)}
+                ${miniMetric('Motorio — tenuta arm-drift (s)',D3,55,C.ok)}
+                ${miniMetric('Respiratorio — SBC',D4,45,C.warn)}
+              </div>
+              <div class="seclabel">Ultimo diario MG-ADL (ieri sera)</div>
+              <div class="card" style="padding:12px;font-size:12.5px;line-height:1.8;">
+                Deglutizione <b>2/3</b> · Voce <b>nasale a fine giornata (2/3)</b> · Ptosi/diplopia <b>1/3</b> · Alzarsi dalla sedia <b>1/3</b> · Igiene personale <b>1/3</b> · Respirazione <b>affanno da sforzo (1/3)</b> — totale <b>8/18</b>
+              </div>
             </div>
           </details>
         </div>
