@@ -299,6 +299,13 @@ const armDrift={
   lastBeep:-1,           // ultimo secondo segnalato col bip
 };
 
+/* Zona morta del drift: i primi gradi di movimento dopo la calibrazione
+   non vengono conteggiati (tolleranza per micro-oscillazione fisiologica
+   e assestamento iniziale del braccio). Il drift "clinico" è quanto il
+   braccio scende OLTRE questo margine. */
+const DRIFT_MARGIN=5;   // gradi di tolleranza iniziale
+function effDrift(raw){ return Math.max(0, raw - DRIFT_MARGIN); }
+
 /* segnali acustici del test motorio (Web Audio, creato dal gesto sul tasto Avvia) */
 let armAudio=null;
 function armBeep(freq,dur,vol){
@@ -336,8 +343,9 @@ function registerAngle(angle){
   armDrift.curAngle=angle;
   if(armDrift.phase!=='running') return;   // fase di allineamento: solo lettura dell'angolo
   if(armDrift.startAngle==null){ armDrift.startAngle=angle; armDrift.lastAngle=angle; }
-  // drift = quanto il braccio è sceso rispetto alla posizione iniziale (valore assoluto della variazione)
-  const drift=Math.abs(angle - armDrift.startAngle);
+  // drift = quanto il braccio è sceso rispetto alla posizione iniziale,
+  // al netto della zona morta iniziale (primi DRIFT_MARGIN gradi tollerati)
+  const drift=effDrift(Math.abs(angle - armDrift.startAngle));
   // tremore: variabilità istantanea fra letture consecutive
   armDrift.tremorBuf.push(Math.abs(angle - armDrift.lastAngle));
   if(armDrift.tremorBuf.length>20) armDrift.tremorBuf.shift();
@@ -381,7 +389,7 @@ function armTick(){
     render();
     return;
   }
-  const drift=armDrift.startAngle!=null ? Math.abs((armDrift.curAngle??armDrift.startAngle)-armDrift.startAngle) : 0;
+  const drift=armDrift.startAngle!=null ? effDrift(Math.abs((armDrift.curAngle??armDrift.startAngle)-armDrift.startAngle)) : 0;
   // un campione di drift ogni ~0.3s per il grafico
   if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
   // stop automatico: tempo scaduto o braccio che cede oltre 30°
@@ -395,10 +403,12 @@ function armTickSim(){
   const elapsed=(performance.now()-armDrift.t0)/1000;
   armDrift.holdTime=elapsed;
   armSecondBeep(elapsed);
-  // modello: drift cresce con curva accelerata + rumore (tremore)
-  const base = Math.pow(elapsed/armDrift.duration, 1.6)*34;
+  // modello: drift cresce con curva accelerata + rumore (tremore).
+  // base aumentata (era 34) per compensare i DRIFT_MARGIN gradi di zona morta,
+  // così la demo continua a raggiungere la soglia di caduta come prima.
+  const base = Math.pow(elapsed/armDrift.duration, 1.6)*39;
   const noise = (Math.random()-0.5)*3;
-  const drift = Math.max(0, base+noise);
+  const drift = effDrift(Math.max(0, base+noise));
   armDrift.maxDrift=Math.max(armDrift.maxDrift, drift);
   armDrift.tremor = 0.6 + Math.abs(noise)*0.4;
   if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
@@ -588,7 +598,7 @@ function armCard(){
         <div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">Motorio — arm drift e test di resistenza</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
-          Appoggia il telefono sul palmo, braccio teso in avanti all'altezza della spalla. Prima ti chiederemo di metterlo <b>in orizzontale</b>: dopo 3 secondi in piano la registrazione parte da sola, con un <b>bip ogni secondo</b> fino alla fine. Il test termina dopo ${armDrift.duration}s o appena il braccio cede (oltre 30°).
+          Appoggia il telefono sul palmo, braccio teso in avanti all'altezza della spalla. Prima ti chiederemo di metterlo <b>in orizzontale</b>: dopo 3 secondi in piano la registrazione parte da sola, con un <b>bip ogni secondo</b> fino alla fine. Una lieve oscillazione iniziale è normale e non viene conteggiata (tolleranza di ${DRIFT_MARGIN}°). Il test termina dopo ${armDrift.duration}s o appena il braccio cede.
         </div>
         ${(()=>{
           const fileProto = location.protocol==='file:';
@@ -734,6 +744,54 @@ function analyzeEyeFrame(lm, vw, vh){
   return { ok:true, ear, earR, earL, pfhMm, mrdMm, irisPx, gaze, gazeUp:gaze<0.42, asym:Math.abs(earR-earL) };
 }
 
+/* ---- overlay live: mostra come il modello riconosce l'occhio ----
+   Disegna sul canvas sovrapposto al video i contorni palpebrali, il cerchio
+   dell'iride e gli assi usati per l'EAR (le distanze verticali = numeratore,
+   la larghezza occhio = denominatore). Diventa rosso quando l'occhio è chiuso
+   (EAR < 0.15), rendendo visibile il "pavimento" dell'EAR di cui sopra. */
+let eyeOverlayOn=true;
+const EYE_RING_R=[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
+const EYE_RING_L=[362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
+function toggleEyeOverlay(){
+  eyeOverlayOn=!eyeOverlayOn;
+  const cv=document.getElementById('eyeOverlay');
+  if(cv){ cv.style.display=eyeOverlayOn?'block':'none';
+    if(!eyeOverlayOn){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); } }
+  const b=document.getElementById('eyeOverlayBtn'); if(b) b.textContent=eyeOverlayOn?'Nascondi punti':'Mostra punti';
+}
+function drawEyeOverlay(lm, vw, vh){
+  const cv=document.getElementById('eyeOverlay');
+  if(!cv || !eyeOverlayOn) return;
+  if(cv.width!==vw || cv.height!==vh){ cv.width=vw; cv.height=vh; }
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,vw,vh);
+  if(!lm) return;
+  const px=i=>{ const p=lm[i]; return [p.x*vw, p.y*vh]; };
+  const earNow=(earEye(lm,EYE.R,vw,vh)+earEye(lm,EYE.L,vw,vh))/2;
+  const blink=earNow<0.15;
+  const ring=blink?'#FF5A47':'#39E0A8';
+  const w=Math.max(1.6, vw/300);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  // contorno palpebrale
+  ctx.lineWidth=w; ctx.strokeStyle=ring;
+  for(const R of [EYE_RING_R, EYE_RING_L]){
+    ctx.beginPath(); R.forEach((i,k)=>{ const [x,y]=px(i); k?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.closePath(); ctx.stroke();
+  }
+  // iride (centro + raggio dai punti orizzontali)
+  ctx.strokeStyle=blink?'#FFB199':'#7FD7FF';
+  for(const [c,a,b] of [[468,469,471],[473,474,476]]){
+    const C=px(c), A=px(a), B=px(b), r=Math.hypot(A[0]-B[0],A[1]-B[1])/2;
+    ctx.beginPath(); ctx.arc(C[0],C[1],r,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle=ring; ctx.beginPath(); ctx.arc(C[0],C[1],w*1.1,0,Math.PI*2); ctx.fill();
+  }
+  // assi dell'EAR: numeratore (verticali) + denominatore (larghezza)
+  ctx.strokeStyle='#FFD86B'; ctx.lineWidth=Math.max(1.1, vw/420);
+  for(const e of [EYE.R, EYE.L]){
+    for(const [a,b] of e.vt){ const A=px(a), B=px(b); ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke(); }
+    const O=px(e.outer), I=px(e.inner); ctx.beginPath(); ctx.moveTo(O[0],O[1]); ctx.lineTo(I[0],I[1]); ctx.stroke();
+  }
+}
+
 /* ---- aggregazione dei biomarcatori della sessione ---- */
 function computeEyeBiomarkers(){
   const all=eyeTest.frames.filter(f=>f.ok);
@@ -798,8 +856,10 @@ function eyeTick(){
         a.t=elapsed;
         eyeTest.frames.push(a);
         eyeTest.gotFrames++;
+        drawEyeOverlay(res.faceLandmarks[0], v.videoWidth, v.videoHeight);
       }else{
         eyeTest.frames.push({ok:false, t:elapsed, ear:0, pfhMm:0, mrdMm:0, gaze:0.5, gazeUp:false, asym:0, blink:false});
+        drawEyeOverlay(null, v.videoWidth, v.videoHeight);
       }
     }
   }
@@ -914,7 +974,17 @@ function eyeCard(){
   if(eyeTest.phase==='running'){
     const visual = eyeTest.source==='sim'
       ? `<div aria-hidden="true" style="height:150px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#E7EFE9,#E7EFE9 10px,#DEE9E1 10px,#DEE9E1 20px);border:1.5px dashed #A9C0B1;font-size:12px;font-family:var(--mono);color:var(--inkSoft);">demo simulata — fotocamera non disponibile</div>`
-      : `<video id="eyeVideo" playsinline muted autoplay style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;background:#15262C;transform:scaleX(-1);margin-top:12px;"></video>`;
+      : `
+        <div style="position:relative;margin-top:12px;border-radius:10px;overflow:hidden;background:#15262C;">
+          <video id="eyeVideo" playsinline muted autoplay style="display:block;width:100%;max-height:200px;object-fit:cover;transform:scaleX(-1);"></video>
+          <canvas id="eyeOverlay" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);pointer-events:none;"></canvas>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;">
+          <div style="font-size:11px;color:var(--inkSoft);line-height:1.45;">
+            <span style="color:#39E0A8;">●</span> contorno occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — diventa <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso
+          </div>
+          <button id="eyeOverlayBtn" class="btn" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">Nascondi punti</button>
+        </div>`;
     return `
       <div class="card" id="eyeLive" style="margin-top:16px;padding:18px;">
         <div style="text-align:center;margin-bottom:8px;">
@@ -1580,7 +1650,8 @@ function ScreenTest(){
   const pct=Math.round(((testStep+1)/testSteps.length)*100);
   const cards=[eyeCard,voiceCard,armCard,sbcCard];
   const phases=[eyeTest.phase,voiceTest.phase,armDrift.phase,sbcTest.phase];
-  const idle=phases[testStep]==='idle';
+  const phase=phases[testStep];
+  const idle=phase==='idle', done=phase==='done', last=testStep===testSteps.length-1, canBack=testStep>0;
   return `
     <div style="font-size:19px;font-weight:700;">Rilevazione guidata</div>
     <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Sessione MG-Sense completa · 4 domini · durata stimata ~5 min</div>
@@ -1595,11 +1666,15 @@ function ScreenTest(){
 
     ${cards[testStep]()}
 
-    ${!idle ? '' : `
+    ${idle ? `
     <div style="display:flex;gap:10px;margin-top:14px;">
-      <button class="btn full" onclick="testNav(-1)">Indietro</button>
-      <button class="btn full primary" onclick="${testStep===testSteps.length-1?'finishSession()':'testNav(1)'}">${testStep===testSteps.length-1?'Completa':'Avanti'}</button>
-    </div>`}
+      ${canBack ? `<button class="btn full" onclick="testNav(-1)">Indietro</button>` : ''}
+      <button class="btn full primary" onclick="${last?'finishSession()':'testNav(1)'}">${last?'Completa':'Avanti'}</button>
+    </div>` : ''}
+    ${done && canBack ? `
+    <div style="margin-top:10px;">
+      <button class="btn full" onclick="testNav(-1)">← Torna al test precedente per ripeterlo</button>
+    </div>` : ''}
     <div style="text-align:center;margin-top:10px;font-size:12px;color:var(--inkSoft);">
       I dati dei sensori sono elaborati sul dispositivo: al server vengono inviati solo i parametri estratti (apertura palpebrale, indici vocali, tenuta/drift/tremore, durata di fonazione), mai video, audio o segnali grezzi.
     </div>
@@ -1641,11 +1716,10 @@ function sliderQ(k,q,minL,maxL){
       </div>
     </div>`;
 }
-function ScreenEPRO(){
+function diarioADL(){
   if(epro.sent){
     const s=eproScore();
     return `
-      <div style="font-size:19px;font-weight:700;">Questionario</div>
       <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Diario MG-ADL digitale · ultime 24 ore</div>
       <div class="card" style="margin-top:20px;padding:22px;text-align:center;border-left:4px solid var(--ok);">
         <div aria-hidden="true" style="width:52px;height:52px;border-radius:999px;background:var(--ok);color:#fff;font-size:26px;display:grid;place-items:center;margin:0 auto;">✓</div>
@@ -1674,7 +1748,6 @@ function ScreenEPRO(){
       + Aggiungi le altre voci MG-ADL: alzarsi dalla sedia, lavarsi/pettinarsi, respirazione
     </button>`;
   return `
-    <div style="font-size:19px;font-weight:700;">Questionario</div>
     <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">Diario MG-ADL digitale · periodo di riferimento: ultime 24 ore</div>
 
     <div class="seclabel">Funzioni bulbari — deglutizione e parola</div>
@@ -1691,6 +1764,113 @@ function ScreenEPRO(){
 
     <div style="margin-top:16px;"><button class="btn primary full" onclick="eproSend()">Invia risposte</button></div>
   `;
+}
+
+/* --- Diario · MG-QOL15r (qualità di vita) ---
+   ATTENZIONE: la MG-QOL15r è uno strumento validato e protetto da copyright
+   (sviluppata da Burns e coll.). Per l'uso clinico/in produzione servono
+   (a) il permesso/la licenza d'uso e (b) la traduzione italiana ufficialmente
+   validata. Le formulazioni qui sotto rendono il CONTENUTO delle 15 voci ma
+   NON sostituiscono la traduzione certificata: vanno rimpiazzate con quella
+   ufficiale prima di qualunque impiego reale.
+   Scala di risposta a 3 livelli (versione "revised"): 0=Per nulla · 1=Un po' · 2=Molto.
+   Totale 0–30; punteggio più alto = maggiore impatto sulla qualità di vita. */
+let qol={a:Array(15).fill(null), sent:false};
+const QOL_OPTS=["Per nulla","Un po'","Molto"];              // 0 · 1 · 2
+const QOL_ITEMS=[
+  "Sono frustrato/a dalla mia condizione",
+  "Ho difficoltà con la vista (visione doppia o palpebra cadente)",
+  "Ho difficoltà a mangiare a causa della mia condizione",
+  "Ho limitato le mie attività sociali",
+  "Ho limitato i miei hobby e passatempi",
+  "Ho difficoltà a soddisfare le esigenze della mia famiglia",
+  "Devo organizzare i miei programmi in base alla mia condizione",
+  "Il mio lavoro (o studio/faccende domestiche) ne ha risentito",
+  "Ho difficoltà a parlare",
+  "Ho difficoltà a guidare",
+  "Mi sento giù di morale a causa della mia condizione",
+  "Ho difficoltà a camminare",
+  "Ho difficoltà a muovermi nei luoghi pubblici",
+  "Mi sento sopraffatto/a dalla mia condizione",
+  "Ho difficoltà a curare la mia igiene personale",
+];
+function setQol(i,v){qol.a[+i]=+v;render();}
+function qolSend(){qol.sent=true;render();}
+function qolEdit(){qol.sent=false;render();}
+function qolReset(){qol={a:Array(15).fill(null),sent:false};render();}
+function qolScore(){
+  const done=qol.a.filter(x=>x!=null).length;
+  const score=qol.a.reduce((s,x)=>s+(x??0),0);
+  return {score,max:30,done,complete:done===15};
+}
+function qolBand(score){
+  if(score<=6)  return {tone:'ok',   txt:'Impatto lieve sulla qualità di vita.'};
+  if(score<=15) return {tone:'warn', txt:'Impatto moderato sulla qualità di vita.'};
+  return {tone:'alert', txt:'Impatto rilevante sulla qualità di vita.'};
+}
+function qolItem(i){
+  const sel=qol.a[i];
+  const opts=QOL_OPTS.map((o,v)=>`<button class="pill ${sel===v?'active':''}" onclick="setQol(${i},${v})">${o}</button>`).join('');
+  return `
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;line-height:1.5;"><span class="mono" style="color:var(--inkSoft);">${i+1}.</span> ${QOL_ITEMS[i]}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${opts}</div>
+    </div>`;
+}
+function diarioQOL(){
+  if(qol.sent){
+    const s=qolScore(), b=qolBand(s.score);
+    return `
+      <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">MG-QOL15r · impatto della miastenia sulla qualità di vita</div>
+      <div class="card" style="margin-top:16px;padding:22px;text-align:center;border-left:4px solid var(--${b.tone});">
+        <div aria-hidden="true" style="width:52px;height:52px;border-radius:999px;background:var(--${b.tone});color:#fff;font-size:26px;display:grid;place-items:center;margin:0 auto;">✓</div>
+        <div style="margin-top:12px;font-weight:700;font-size:16px;">Risposte inviate</div>
+        <div class="mono" style="margin-top:14px;font-size:30px;font-weight:600;color:var(--primary);">${s.score}<span style="font-size:16px;color:var(--inkSoft);">/30</span></div>
+        <div style="font-size:12px;color:var(--inkSoft);">${s.complete?'tutte le 15 voci compilate':`${s.done}/15 voci compilate`}</div>
+        <div style="margin-top:10px;font-size:13px;color:var(--inkSoft);line-height:1.55;">${b.txt} Il punteggio entra nel tuo storico ed è visibile al neurologo. La MG-QOL15r si compila di solito a ogni visita, non ogni giorno.</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;">
+        <button class="btn full" onclick="qolEdit()">Modifica risposte</button>
+        <button class="btn full primary" onclick="setTab('home')">Torna alla Home</button>
+      </div>`;
+  }
+  const done=qol.a.filter(x=>x!=null).length;
+  const liveScore=qol.a.reduce((s,x)=>s+(x??0),0);
+  return `
+    <div style="font-size:13px;color:var(--inkSoft);margin-top:2px;">MG-QOL15r · quanto la miastenia ti ha condizionato di recente</div>
+    <div class="card" style="margin-top:12px;background:var(--primarySoft);box-shadow:none;padding:12px 16px;">
+      <div style="font-size:12.5px;color:#1B4D33;line-height:1.5;">Per ogni affermazione indica quanto è stata vera per te. Qui non c'è il periodo "delle 24 ore": pensa alle ultime settimane.</div>
+    </div>
+    <div class="seclabel">15 voci · Per nulla (0) · Un po' (1) · Molto (2)</div>
+    ${QOL_ITEMS.map((_,i)=>qolItem(i)).join('')}
+    <div class="card" style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:13px;color:var(--inkSoft);">Compilate <b class="mono" style="color:var(--ink);">${done}/15</b></span>
+      <span style="font-size:13px;color:var(--inkSoft);">Parziale <b class="mono" style="color:var(--primary);">${liveScore}/30</b></span>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;">
+      <button class="btn full" onclick="qolReset()">Azzera</button>
+      <button class="btn primary full" onclick="qolSend()">Invia risposte</button>
+    </div>`;
+}
+
+/* --- Diario: contenitore con i due questionari (MG-ADL ePRO + MG-QOL15r) --- */
+let diarioTab='adl';   // 'adl' | 'qol'
+function setDiarioTab(t){diarioTab=t;render();}
+function ScreenEPRO(){
+  const seg=(id,label,sub)=>`
+    <button onclick="setDiarioTab('${id}')" aria-pressed="${diarioTab===id}"
+      style="flex:1;border:none;cursor:pointer;border-radius:10px;padding:9px 8px;line-height:1.25;
+      background:${diarioTab===id?'var(--primary)':'transparent'};color:${diarioTab===id?'#fff':'var(--ink)'};">
+      <div style="font-size:13px;font-weight:600;">${label}</div>
+      <div style="font-size:10.5px;opacity:.85;">${sub}</div>
+    </button>`;
+  return `
+    <div style="font-size:19px;font-weight:700;">Questionari</div>
+    <div style="display:flex;gap:4px;margin-top:12px;padding:4px;background:var(--bg);border:1px solid var(--line);border-radius:12px;">
+      ${seg('adl','Diario MG-ADL','sintomi · ogni giorno')}
+      ${seg('qol','MG-QOL15r','qualità di vita · per visita')}
+    </div>
+    <div style="margin-top:14px;">${diarioTab==='qol'?diarioQOL():diarioADL()}</div>`;
 }
 
 /* --- Trend --- */
