@@ -3,7 +3,7 @@
   "short_name": "MG-Sense",
   "description": "Monitoraggio domiciliare della miastenia gravis: test guidati con sensori (oculare, bulbare, motorio), diario MG-ADL e trend rispetto al baseline personale.",
   "lang": "it",
-  "start_url": "./",
+  "start_url": "./", 
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
