@@ -859,56 +859,279 @@ function eyeCard(){
 }
 
 /* ============================================================
-   MODULO BULBARE — lettura ad alta voce con microfono
-   Misura via Web Audio API (on-device): intensità vocale (RMS),
-   calo dell'intensità nel corso della lettura e percentuale di
-   pause — proxy precoci di affaticamento bulbare (disfonia,
-   disartria). Fallback simulato se il microfono non è disponibile.
+   MODULO BULBARE — analisi vocale acustica (microfono)
+   Biomarcatori da lettura ad alta voce / fonazione prolungata,
+   secondo la letteratura sulla disfonia miastenica. Tutto
+   on-device (Web Audio API): al server vanno solo i parametri.
+
+     • F0     — frequenza fondamentale: media, SD, range.
+     • Jitter — perturbazione del PERIODO fra cicli consecutivi.
+     • Shimmer— perturbazione dell'AMPIEZZA fra cicli consecutivi
+                (picco-picco per ciclo). Più alto nei pazienti MG.
+     • HNR    — rapporto armoniche/rumore (dB).
+     • Pause  — silenzi interni: numero, durata, regolarità, quota.
+     • Fatigue— Δ inizio→fine del compito su HNR, jitter, shimmer
+                e F0: marcatore chiave nella MG (peggioramento
+                sotto sforzo prolungato).
+
+   Jitter e shimmer sono stimati per ciclo DENTRO ciascun frame:
+   è un'approssimazione delle misure ciclo-sincrone MDVP/Praat,
+   non il valore clinico esatto (che marca i singoli cicli).
+   Su desktop / file:// o senza microfono parte una demo simulata
+   che alimenta lo STESSO motore di aggregazione.
    ============================================================ */
+
 const READING="Questa mattina il cielo sopra la collina era limpido e l'aria fresca profumava di pane appena sfornato. Marina contava ad alta voce i gradini della scala, uno dopo l'altro, senza mai fermarsi, fino ad arrivare in cima e a salutare il sole con un lungo respiro.";
 
 const voiceTest={
-  phase:'idle',            // idle | running | done
-  source:null,             // 'mic' | 'sim'
-  duration:30,             // durata della lettura (s)
-  stream:null, actx:null, analyser:null, buf:null,
-  samples:[], level:0, speechStart:false,
-  pauseFrames:0, totFrames:0, lastSample:0,
+  phase:'idle', source:null, duration:30,
+  stream:null, actx:null, analyser:null, fbuf:null, sr:44100,
+  samples:[], level:0, speechStart:false, pauseFrames:0, totFrames:0, lastSample:0,
+  // frame acustici {t, voiced, f0, period, hnr, r, rms, shAbs, shPairs, ampSum, ampN, ampMean}
+  frames:[], lastFrameAt:0,
   t0:0, raf:null,
 };
 
-// Campiona il livello ogni ~200ms e aggiorna i contatori di parlato/pausa
-function voicePush(level){
-  if(performance.now()-voiceTest.lastSample<200) return;
-  voiceTest.lastSample=performance.now();
-  voiceTest.samples.push(level);
-  if(level>6) voiceTest.speechStart=true;
-  if(voiceTest.speechStart){
-    voiceTest.totFrames++;
-    if(level<6) voiceTest.pauseFrames++;
+/* ---------- DSP: F0, periodicità/HNR e ampiezza per ciclo ---------- */
+function analyzeVoiceFrame(buf, sr){
+  const N=buf.length;
+  let mean=0; for(let i=0;i<N;i++) mean+=buf[i]; mean/=N;
+  let e0=0; for(let i=0;i<N;i++){ const v=buf[i]-mean; e0+=v*v; }
+  const rms=Math.sqrt(e0/N);
+  const SILENT={voiced:false,rms,f0:0,period:0,hnr:0,r:0,shAbs:0,shPairs:0,ampSum:0,ampN:0,ampMean:0};
+  if(rms<0.012) return SILENT;
+
+  const minLag=Math.max(2, Math.floor(sr/350));   // F0 max ~350 Hz
+  const maxLag=Math.min(N-2, Math.floor(sr/75));    // F0 min ~75 Hz
+  // autocorrelazione normalizzata per ogni lag
+  const rArr=new Float32Array(maxLag+2);
+  let rmax=0, lagAtMax=-1;
+  for(let lag=minLag; lag<=maxLag; lag++){
+    let acf=0,e=0,en=0;
+    for(let i=0;i<N-lag;i++){ const a=buf[i]-mean,b=buf[i+lag]-mean; acf+=a*b; e+=a*a; en+=b*b; }
+    const r=acf/(Math.sqrt(e*en)||1);
+    rArr[lag]=r;
+    if(r>rmax){ rmax=r; lagAtMax=lag; }
   }
+  if(lagAtMax<2 || rmax<0.45){ const o=Object.assign({},SILENT); o.r=rmax; return o; }
+  // Scegli il PRIMO massimo locale ≥ 85% del picco globale: è la fondamentale,
+  // non un suo multiplo. Evita gli errori d'ottava verso il basso (F0 dimezzata).
+  const thr=0.85*rmax;
+  let bestLag=lagAtMax;
+  for(let lag=minLag+1; lag<maxLag; lag++){
+    if(rArr[lag]>=thr && rArr[lag]>=rArr[lag-1] && rArr[lag]>=rArr[lag+1]){ bestLag=lag; break; }
+  }
+  const bestR=rArr[bestLag];
+
+  // interpolazione parabolica del picco (F0 sub-campione)
+  let lag=bestLag;
+  if(bestLag>minLag && bestLag<maxLag){
+    const rm=rArr[bestLag-1], r0=bestR, rp=rArr[bestLag+1];
+    const den=(rm-2*r0+rp);
+    if(den!==0){ const delta=0.5*(rm-rp)/den; if(Math.abs(delta)<1) lag=bestLag+delta; }
+  }
+  const period=lag/sr, f0=sr/lag;
+  const r=Math.min(0.99999, Math.max(1e-6, bestR));
+  const hnr=10*Math.log10(r/(1-r));
+
+  // ampiezza picco-picco per ciclo → contributi allo shimmer del frame
+  let shAbs=0, shPairs=0, ampSum=0, ampN=0;
+  const nC=Math.floor(N/lag);
+  if(lag>=4 && nC>=2){
+    let prev=null;
+    for(let k=0;k<nC;k++){
+      const start=Math.round(k*lag), end=Math.min(N,Math.round((k+1)*lag));
+      let mn=Infinity, mx=-Infinity;
+      for(let i=start;i<end;i++){ const v=buf[i]-mean; if(v<mn)mn=v; if(v>mx)mx=v; }
+      const amp=mx-mn;
+      ampSum+=amp; ampN++;
+      if(prev!==null){ shAbs+=Math.abs(amp-prev); shPairs++; }
+      prev=amp;
+    }
+  }
+  const ampMean=ampN?ampSum/ampN:0;
+  return {voiced:true, rms, f0, period, hnr, r, shAbs, shPairs, ampSum, ampN, ampMean};
 }
 
+function acfAt(buf,mean,lag){
+  const N=buf.length; let acf=0,e=0,en=0;
+  for(let i=0;i<N-lag;i++){ const a=buf[i]-mean,b=buf[i+lag]-mean; acf+=a*b; e+=a*a; en+=b*b; }
+  return acf/(Math.sqrt(e*en)||1);
+}
+
+/* ---------- aggregazione ---------- */
+function vAvg(a){ return a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+
+function jitterFromPeriods(periods){
+  if(periods.length<3) return 0;
+  let sumT=0,sumD=0;
+  for(const p of periods) sumT+=p;
+  for(let i=1;i<periods.length;i++) sumD+=Math.abs(periods[i]-periods[i-1]);
+  const meanT=sumT/periods.length, meanD=sumD/(periods.length-1);
+  return meanT>0 ? meanD/meanT*100 : 0;
+}
+// shimmer (%) dai contributi per-frame: media |ΔA| / media A
+function shimmerFromFrames(arr){
+  let a=0,p=0,s=0,n=0;
+  for(const f of arr){ a+=f.shAbs; p+=f.shPairs; s+=f.ampSum; n+=f.ampN; }
+  return (p>0 && n>0 && s>0) ? (a/p)/(s/n)*100 : 0;
+}
+
+function computeVoiceBiomarkers(){
+  const F=voiceTest.frames;
+  const voiced=F.filter(f=>f.voiced);
+  if(voiced.length<8) return {ok:false};
+
+  // F0
+  const f0s=voiced.map(f=>f.f0).filter(x=>x>0);
+  const meanF0=vAvg(f0s);
+  const sdF0=Math.sqrt(vAvg(f0s.map(x=>(x-meanF0)**2)));
+  const f0Min=Math.min(...f0s), f0Max=Math.max(...f0s);
+
+  // HNR
+  const meanHNR=vAvg(voiced.map(f=>f.hnr));
+
+  // Shimmer
+  const shimmerPct=shimmerFromFrames(voiced);
+
+  // Jitter: solo fra frame sonori ADIACENTI nel tempo (per "run")
+  let sumT=0,nT=0,sumD=0,nD=0, run=[];
+  const flush=()=>{
+    if(run.length>=2){
+      for(const p of run){ sumT+=p; nT++; }
+      for(let i=1;i<run.length;i++){ sumD+=Math.abs(run[i]-run[i-1]); nD++; }
+    }
+    run=[];
+  };
+  for(const f of F){ if(f.voiced && f.period>0) run.push(f.period); else flush(); }
+  flush();
+  const jitterPct=(nD>0 && nT>0) ? (sumD/nD)/(sumT/nT)*100 : 0;
+
+  // Pause interne
+  const minPause=0.15;
+  const intervals=[];
+  const firstV=F.findIndex(f=>f.voiced);
+  let lastV=-1; for(let k=F.length-1;k>=0;k--){ if(F[k].voiced){ lastV=k; break; } }
+  if(firstV>=0 && lastV>firstV){
+    let st=-1;
+    for(let k=firstV;k<=lastV;k++){
+      if(!F[k].voiced){ if(st<0) st=k; }
+      else if(st>=0){ const dur=F[k].t-F[st].t; if(dur>=minPause) intervals.push(dur); st=-1; }
+    }
+  }
+  const nPauses=intervals.length;
+  const meanPause=nPauses?vAvg(intervals):0;
+  const sdPause=nPauses>1?Math.sqrt(vAvg(intervals.map(x=>(x-meanPause)**2))):0;
+  const totalPause=intervals.reduce((a,b)=>a+b,0);
+  const span=(firstV>=0&&lastV>firstV)?(F[lastV].t-F[firstV].t):0;
+  const pauseRatio=span>0?totalPause/span*100:0;
+
+  // Affaticabilità: primo vs ultimo terzo dei frame sonori
+  let dHNR=0,dJit=0,dShim=0,dF0=0,hnrStart=meanHNR,hnrEnd=meanHNR;
+  if(voiced.length>=6){
+    const n=Math.floor(voiced.length/3);
+    const first=voiced.slice(0,n), last=voiced.slice(-n);
+    hnrStart=vAvg(first.map(f=>f.hnr)); hnrEnd=vAvg(last.map(f=>f.hnr));
+    dHNR=hnrEnd-hnrStart;
+    dJit=jitterFromPeriods(last.map(f=>f.period))-jitterFromPeriods(first.map(f=>f.period));
+    dShim=shimmerFromFrames(last)-shimmerFromFrames(first);
+    dF0=vAvg(last.map(f=>f.f0))-vAvg(first.map(f=>f.f0));
+  }
+
+  return {ok:true, meanF0, sdF0, f0Min, f0Max, meanHNR, jitterPct, shimmerPct,
+          nPauses, meanPause, sdPause, totalPause, pauseRatio,
+          dHNR, dJit, dShim, dF0, hnrStart, hnrEnd,
+          f0Contour:voiced.map(f=>f.f0)};
+}
+
+/* ---------- interpretazione (soglie indicative, non diagnostiche) ---------- */
+function voiceInterpretBio(m){
+  if(!m.ok) return {tone:'warn', txt:'Voce non rilevata o segnale insufficiente: ripeti in ambiente silenzioso, parlando a voce normale verso il telefono.'};
+  const flags=[];
+  if(m.jitterPct>=1.6)  flags.push('jitter elevato');
+  if(m.shimmerPct>=4)   flags.push('shimmer elevato');
+  if(m.meanHNR<12)      flags.push('HNR ridotto');
+  if(m.dHNR<=-3)        flags.push('HNR in calo durante il compito');
+  if(m.dJit>=0.6)       flags.push('jitter in aumento');
+  if(m.dShim>=1.5)      flags.push('shimmer in aumento');
+  if(m.pauseRatio>=35 || (m.nPauses>=6 && m.sdPause>=0.25)) flags.push('pause frequenti o irregolari');
+
+  const strong=(m.jitterPct>=2.2)||(m.shimmerPct>=6)||(m.meanHNR<8)||(m.dHNR<=-5)||(m.pauseRatio>=50);
+  let tone='ok', txt='Voce stabile per tutta la durata: F0 regolare, jitter/shimmer contenuti, HNR conservato e pause fisiologiche. Nessun segnale di affaticamento bulbare.';
+  if(strong){
+    tone='alert';
+    txt='Marcato deterioramento dei parametri vocali ('+flags.join(', ')+'): pattern compatibile con affaticamento bulbare, da segnalare al centro di riferimento.';
+  }else if(flags.length){
+    tone='warn';
+    txt='Alterazioni lievi/moderate ('+flags.join(', ')+'): affaticamento bulbare iniziale da monitorare nei prossimi giorni.';
+  }
+  return {tone,txt};
+}
+
+/* ---------- acquisizione live (sensore reale) ---------- */
 function voiceTick(){
   if(voiceTest.phase!=='running') return;
-  const elapsed=(performance.now()-voiceTest.t0)/1000;
-  voiceTest.analyser.getByteTimeDomainData(voiceTest.buf);
-  let sum=0;
-  for(let i=0;i<voiceTest.buf.length;i++){ const d=(voiceTest.buf[i]-128)/128; sum+=d*d; }
-  voiceTest.level=Math.min(100,Math.sqrt(sum/voiceTest.buf.length)*340);
-  voicePush(voiceTest.level);
+  const now=performance.now(), elapsed=(now-voiceTest.t0)/1000;
+
+  voiceTest.analyser.getFloatTimeDomainData(voiceTest.fbuf);
+  let s=0; for(let i=0;i<voiceTest.fbuf.length;i++){ const d=voiceTest.fbuf[i]; s+=d*d; }
+  const rms=Math.sqrt(s/voiceTest.fbuf.length);
+  voiceTest.level=Math.min(100, rms*340);
+
+  if(now-voiceTest.lastSample>=200){
+    voiceTest.lastSample=now;
+    voiceTest.samples.push(voiceTest.level);
+    if(voiceTest.level>6) voiceTest.speechStart=true;
+    if(voiceTest.speechStart){ voiceTest.totFrames++; if(voiceTest.level<6) voiceTest.pauseFrames++; }
+  }
+  if(now-voiceTest.lastFrameAt>=70){
+    voiceTest.lastFrameAt=now;
+    const fr=analyzeVoiceFrame(voiceTest.fbuf, voiceTest.sr);
+    fr.t=elapsed;
+    voiceTest.frames.push(fr);
+  }
+
   if(elapsed>=voiceTest.duration){ voiceStop(); return; }
   updateVoiceLive(elapsed);
 }
 
-// Fallback: lettura simulata con calo progressivo e pause (desktop / permesso negato)
+/* ---------- demo simulata ---------- */
 function voiceTickSim(){
   if(voiceTest.phase!=='running') return;
-  const elapsed=(performance.now()-voiceTest.t0)/1000;
-  const inPause=Math.sin(elapsed*1.7)>0.92;
-  const decay=1-(elapsed/voiceTest.duration)*0.38;
-  voiceTest.level=inPause?2:Math.max(2,(32+20*Math.abs(Math.sin(elapsed*6.3))+(Math.random()-0.5)*10)*decay);
-  voicePush(voiceTest.level);
+  const now=performance.now(), elapsed=(now-voiceTest.t0)/1000;
+  const frac=elapsed/voiceTest.duration;
+  const inPause=Math.sin(elapsed*1.7 + Math.sin(elapsed*0.6))>0.9;
+  const decay=1-frac*0.35;
+  voiceTest.level=inPause?2:Math.max(2,(34+18*Math.abs(Math.sin(elapsed*6.0))+(Math.random()-0.5)*8)*decay);
+
+  if(now-voiceTest.lastSample>=200){
+    voiceTest.lastSample=now;
+    voiceTest.samples.push(voiceTest.level);
+    if(voiceTest.level>6) voiceTest.speechStart=true;
+    if(voiceTest.speechStart){ voiceTest.totFrames++; if(voiceTest.level<6) voiceTest.pauseFrames++; }
+  }
+  if(now-voiceTest.lastFrameAt>=70){
+    voiceTest.lastFrameAt=now;
+    let fr;
+    if(inPause || voiceTest.level<6){
+      fr={voiced:false,rms:0.005,f0:0,period:0,hnr:0,r:0,shAbs:0,shPairs:0,ampSum:0,ampN:0,ampMean:0,t:elapsed};
+    }else{
+      const f0=155 + 8*Math.sin(elapsed*0.8) + (Math.random()-0.5)*(2+6*frac);  // deriva + tremore
+      const period=1/f0;
+      const hnr=Math.max(2, 18 - 9*frac + (Math.random()-0.5)*2);                // HNR in calo
+      // shimmer sintetico crescente (~3%→8%)
+      const nC=6, baseA=0.05, relSh=0.03+0.05*frac;
+      let shAbs=0, shPairs=0, ampSum=0, prev=null;
+      for(let k=0;k<nC;k++){
+        const amp=baseA*(1+(Math.random()-0.5)*2*relSh);
+        ampSum+=amp;
+        if(prev!==null){ shAbs+=Math.abs(amp-prev); shPairs++; }
+        prev=amp;
+      }
+      fr={voiced:true,rms:0.05,f0,period,hnr,r:0.95,shAbs,shPairs,ampSum,ampN:nC,ampMean:baseA,t:elapsed};
+    }
+    voiceTest.frames.push(fr);
+  }
   if(elapsed>=voiceTest.duration){ voiceStop(); return; }
   updateVoiceLive(elapsed);
 }
@@ -920,6 +1143,10 @@ function updateVoiceLive(elapsed){
   el.querySelector('#voiceBar').style.width=Math.min(100,elapsed/voiceTest.duration*100)+'%';
   el.querySelector('#vuBar').style.width=Math.min(100,voiceTest.level)+'%';
   el.querySelector('#voiceLevel').textContent=voiceTest.level.toFixed(0);
+  let lastV=null;
+  for(let i=voiceTest.frames.length-1;i>=0;i--){ if(voiceTest.frames[i].voiced){ lastV=voiceTest.frames[i]; break; } }
+  const f0el=el.querySelector('#voiceF0');
+  if(f0el) f0el.textContent=lastV?Math.round(lastV.f0)+' Hz':'—';
   const st=el.querySelector('#voiceStatus');
   if(st) st.textContent=voiceTest.source==='sim'
     ? 'demo simulata'
@@ -936,74 +1163,54 @@ function voiceFreeHW(){
 }
 
 async function voiceStart(){
-  Object.assign(voiceTest,{phase:'running',source:null,samples:[],level:0,speechStart:false,pauseFrames:0,totFrames:0,lastSample:0,t0:performance.now()});
+  Object.assign(voiceTest,{phase:'running',source:null,samples:[],level:0,speechStart:false,
+    pauseFrames:0,totFrames:0,lastSample:0,frames:[],lastFrameAt:0,t0:performance.now()});
   render();
   try{
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no-media');
-    voiceTest.stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    // AGC/riduzione rumore/eco OFF: altrimenti falsano intensità, HNR, jitter e shimmer
+    voiceTest.stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}, video:false
+    });
     voiceTest.source='mic';
     const AC=window.AudioContext||window.webkitAudioContext;
     voiceTest.actx=new AC();
     await voiceTest.actx.resume().catch(()=>{});
+    voiceTest.sr=voiceTest.actx.sampleRate||44100;
     const srcNode=voiceTest.actx.createMediaStreamSource(voiceTest.stream);
     voiceTest.analyser=voiceTest.actx.createAnalyser();
     voiceTest.analyser.fftSize=2048;
     srcNode.connect(voiceTest.analyser);
-    voiceTest.buf=new Uint8Array(voiceTest.analyser.fftSize);
-    voiceTest.t0=performance.now();
+    voiceTest.fbuf=new Float32Array(voiceTest.analyser.fftSize);
+    voiceTest.t0=performance.now(); voiceTest.lastFrameAt=0;
     voiceTest.raf=setInterval(voiceTick,50);
     render();
   }catch(_){
-    // microfono assente o permesso negato → demo simulata
-    voiceTest.source='sim'; voiceTest.t0=performance.now();
+    voiceTest.source='sim'; voiceTest.t0=performance.now(); voiceTest.lastFrameAt=0;
     voiceTest.raf=setInterval(voiceTickSim,50);
     render();
   }
 }
 
-function voiceStop(abort){
-  voiceFreeHW();
-  voiceTest.phase=abort===true?'idle':'done';
-  render();
-}
-function voiceReset(){ voiceTest.phase='idle'; voiceTest.samples=[]; render(); }
+function voiceStop(abort){ voiceFreeHW(); voiceTest.phase=abort===true?'idle':'done'; render(); }
+function voiceReset(){ voiceTest.phase='idle'; voiceTest.samples=[]; voiceTest.frames=[]; render(); }
 
-function voiceMetrics(){
-  const sp=voiceTest.samples.filter(v=>v>6);
-  const mean=sp.length ? sp.reduce((a,b)=>a+b,0)/sp.length : 0;
-  let calo=0;
-  if(sp.length>=9){
-    const n=Math.floor(sp.length/3);
-    const first=sp.slice(0,n).reduce((a,b)=>a+b,0)/n;
-    const last=sp.slice(-n).reduce((a,b)=>a+b,0)/n;
-    if(first>0) calo=Math.max(0,(first-last)/first*100);
-  }
-  const pause=voiceTest.totFrames ? voiceTest.pauseFrames/voiceTest.totFrames*100 : 0;
-  return {mean,calo,pause};
-}
-
-// Interpretazione clinica sintetica del risultato
-function voiceInterpret(m){
-  if(m.mean<5) return {tone:'warn',txt:'Voce non rilevata o troppo debole: ripetere il test in ambiente silenzioso, parlando a voce normale verso il telefono.'};
-  let tone='ok', txt='Intensità vocale stabile per tutta la lettura, con pause fisiologiche: nessun segnale di affaticamento bulbare.';
-  if(m.calo>=30 || m.pause>=45){ tone='alert'; txt='Calo marcato dell\'intensità vocale e pause frequenti durante la lettura: possibile affaticamento bulbare, da segnalare al centro di riferimento.'; }
-  else if(m.calo>=12 || m.pause>=28){ tone='warn'; txt='Lieve calo dell\'intensità o aumento delle pause verso fine lettura: affaticamento bulbare iniziale da monitorare.'; }
-  return {tone,txt};
-}
-
+/* ---------- schede UI ---------- */
 function voiceCard(){
   const s=testSteps[1];
+
   if(voiceTest.phase==='idle'){
     return `
       <div class="card" style="margin-top:16px;padding:20px;text-align:center;">
         <div aria-hidden="true" style="font-size:44px;">${s.icon}</div>
         <div style="margin-top:10px;"><span class="badge neutral">${s.sensor}</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">${s.label}</div>
-        <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">${s.hint} Durata: ${voiceTest.duration} secondi, in ambiente silenzioso.</div>
+        <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">${s.hint} Durata: ${voiceTest.duration} secondi, in ambiente silenzioso. Vengono stimati F0, jitter, shimmer, HNR e le pause.</div>
         ${mediaNote('Il microfono')}
         <button class="btn primary full" style="margin-top:16px;" onclick="voiceStart()">Avvia test vocale</button>
       </div>`;
   }
+
   if(voiceTest.phase==='running'){
     return `
       <div class="card" id="voiceLive" style="margin-top:16px;padding:18px;">
@@ -1017,23 +1224,61 @@ function voiceCard(){
           <div class="row-flex" style="font-size:11px;color:var(--inkSoft);"><span>intensità vocale</span><span class="mono" id="voiceLevel" style="font-weight:600;color:var(--primary);font-size:14px;">0</span></div>
           <div style="height:10px;background:var(--line);border-radius:999px;margin-top:4px;overflow:hidden;"><div id="vuBar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--ok),var(--warn));border-radius:999px;transition:width .08s;"></div></div>
         </div>
+        <div class="row-flex" style="margin-top:10px;font-size:11px;color:var(--inkSoft);"><span>F0 corrente (frequenza fondamentale)</span><span class="mono" id="voiceF0" style="font-weight:600;color:var(--primary);font-size:14px;">—</span></div>
 
         <div id="voiceSpark" style="margin-top:10px;"></div>
         <button class="btn full" style="margin-top:16px;" onclick="voiceStop()">Termina ora</button>
       </div>`;
   }
-  const m=voiceMetrics(), r=voiceInterpret(m);
+
+  // ---- done ----
+  const m=computeVoiceBiomarkers();
+  const r=voiceInterpretBio(m);
+
+  if(!m.ok){
+    return `
+      <div class="card" style="margin-top:16px;padding:18px;">
+        <div class="row-flex"><div style="font-weight:700;font-size:15px;">Risultato — analisi vocale</div><span class="badge warn">Dato insufficiente</span></div>
+        <div class="card" style="margin-top:12px;padding:12px;background:var(--warnSoft);border:none;font-size:13px;color:var(--warn);line-height:1.5;">${r.txt}</div>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <button class="btn full" onclick="voiceReset()">Ripeti</button>
+          <button class="btn full primary" onclick="testNav(1)">Continua</button>
+        </div>
+      </div>`;
+  }
+
+  const sign=x=>(x>=0?'+':'')+x;
+  const jColor =m.jitterPct >=1.6?'var(--alert)':'var(--ink)';
+  const shColor=m.shimmerPct>=4  ?'var(--alert)':'var(--ink)';
+  const hColor =m.meanHNR   <12  ?'var(--warn)' :'var(--ok)';
+  const tile=(val,label,color)=>`<div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:18px;font-weight:600;${color?`color:${color};`:''}">${val}</div><div style="font-size:11px;color:var(--inkSoft);">${label}</div></div>`;
+
   return `
     <div class="card" style="margin-top:16px;padding:18px;">
-      <div class="row-flex"><div style="font-weight:700;font-size:15px;">Risultato — lettura ad alta voce</div><span class="badge ${r.tone}">${r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato'}</span></div>
+      <div class="row-flex"><div style="font-weight:700;font-size:15px;">Risultato — analisi vocale</div><span class="badge ${r.tone}">${r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato'}</span></div>
+
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;">
-        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">${m.mean.toFixed(0)}</div><div style="font-size:11px;color:var(--inkSoft);">intensità media</div></div>
-        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">−${m.calo.toFixed(0)}%</div><div style="font-size:11px;color:var(--inkSoft);">calo intensità</div></div>
-        <div class="card" style="padding:10px;background:var(--bg);text-align:center;"><div class="mono" style="font-size:20px;font-weight:600;">${m.pause.toFixed(0)}%</div><div style="font-size:11px;color:var(--inkSoft);">pause</div></div>
+        ${tile(m.meanF0.toFixed(0)+' Hz','F0 media')}
+        ${tile(m.jitterPct.toFixed(2)+'%','jitter',jColor)}
+        ${tile(m.shimmerPct.toFixed(2)+'%','shimmer',shColor)}
+        ${tile(m.meanHNR.toFixed(1)+' dB','HNR',hColor)}
+        ${tile(m.nPauses,'pause')}
+        ${tile(m.pauseRatio.toFixed(0)+'%','tempo in pausa')}
       </div>
-      ${voiceTest.samples.length>1?`<div style="margin-top:12px;">${spark(voiceTest.samples,null,C.primary,50,300)}</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">intensità vocale nel corso della lettura</div>`:''}
+
+      <div style="font-size:11px;color:var(--inkSoft);margin-top:8px;line-height:1.55;">
+        F0 ${m.meanF0.toFixed(0)} ± ${m.sdF0.toFixed(0)} Hz · range ${m.f0Min.toFixed(0)}–${m.f0Max.toFixed(0)} Hz · pausa media ${m.meanPause.toFixed(2)} s (±${m.sdPause.toFixed(2)})<br>
+        Δ inizio→fine — HNR ${sign(+m.dHNR.toFixed(1))} dB · jitter ${sign(+m.dJit.toFixed(2))}% · shimmer ${sign(+m.dShim.toFixed(2))}%
+      </div>
+
+      ${m.f0Contour.length>1?`<div style="margin-top:12px;">${spark(m.f0Contour,null,C.primary,50,300)}</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">profilo di F0 nel tempo (solo frame sonori)</div>`:''}
+
       <div class="card" style="margin-top:12px;padding:12px;background:var(--${r.tone}Soft);border:none;font-size:13px;color:var(--${r.tone==='ok'?'ok':r.tone});line-height:1.5;">${r.txt}</div>
-      <div style="font-size:11px;color:var(--inkSoft);margin-top:8px;">Analisi on-device del segnale audio: la registrazione non viene salvata né inviata, solo i parametri estratti.</div>
+
+      <div style="font-size:11px;color:var(--inkSoft);margin-top:8px;line-height:1.5;">
+        Analisi on-device: la registrazione non viene salvata né inviata, solo i parametri estratti. HNR via autocorrelazione normalizzata; jitter e shimmer stimati per ciclo dentro i frame (approssimazione delle misure ciclo-sincrone MDVP/Praat).
+      </div>
+
       <div style="display:flex;gap:10px;margin-top:14px;">
         <button class="btn full" onclick="voiceReset()">Ripeti</button>
         <button class="btn full primary" onclick="testNav(1)">Continua</button>
