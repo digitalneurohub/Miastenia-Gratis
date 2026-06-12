@@ -2,12 +2,12 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>MG-Sense · Digital Biomarkers per la Miastenia Gravis</title>
 
 <!-- PWA: identità, colori e installazione -->
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#0F5E63">
+<meta name="theme-color" content="#2E7D4F">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,7 +16,7 @@
 <meta name="apple-mobile-web-app-title" content="MG-Sense">
 
 <!--
-  MG-Sense — Anteprima funzionale
+  MG-Sense — Web app
   Quattro domini: oculare, bulbare, motorio, respiratorio.
   ePRO ispirato alla MG-ADL. Alert con focus sul rischio di crisi miastenica.
   File autonomo: aprire con doppio click in qualsiasi browser. Funziona offline.
@@ -26,14 +26,15 @@
 
   :root{
     --bg:#F4F7F8; --card:#FFFFFF; --ink:#15262C; --inkSoft:#5A6E75;
-    --line:#DCE5E8; --primary:#0F5E63; --primarySoft:#E3EFF0;
+    --line:#DCE5E8; --primary:#2E7D4F; --primarySoft:#E5F2EA;
     --ok:#2E7D4F; --okSoft:#E5F2EA; --warn:#B07614; --warnSoft:#FBF1DC;
     --alert:#B3372E; --alertSoft:#FAE7E5;
     --font:'IBM Plex Sans',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,monospace;
   }
   *{box-sizing:border-box;}
-  body{margin:0;font-family:var(--font);color:var(--ink);background:#E8EDEF;min-height:100vh;padding:20px 14px;}
+  html,body{height:100%;}
+  body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
   input[type=range]{accent-color:var(--primary);width:100%;}
   button{font-family:inherit;cursor:pointer;}
   :focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
@@ -56,61 +57,59 @@
   .row-flex{display:flex;justify-content:space-between;align-items:center;}
   .hidden{display:none !important;}
 
-  /* preview header */
-  .previewbar{max-width:980px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
-  .toggle{display:flex;border:1.5px solid var(--primary);border-radius:10px;overflow:hidden;}
-  .toggle button{padding:9px 16px;font-size:13.5px;font-weight:600;border:none;background:#fff;color:var(--primary);}
-  .toggle button.active{background:var(--primary);color:#fff;}
+  /* app bar */
+  .appbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-shrink:0;padding-top:calc(10px + env(safe-area-inset-top));}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+  .brand img{width:34px;height:34px;border-radius:8px;flex-shrink:0;}
+  .brandname{font-weight:700;font-size:16px;line-height:1.15;}
+  .brandsub{font-size:11px;color:var(--inkSoft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rolebtn{display:flex;align-items:center;gap:7px;border:1.5px solid var(--primary);background:var(--card);color:var(--primary);border-radius:999px;padding:7px 13px;font-weight:600;font-size:13px;flex-shrink:0;}
+  .rolebtn .ric{font-size:17px;line-height:1;}
 
-  /* phone */
-  .phone{max-width:390px;margin:0 auto;background:var(--bg);border-radius:28px;border:1px solid #C9D4D8;box-shadow:0 12px 40px rgba(21,38,44,.14);overflow:hidden;display:flex;flex-direction:column;height:760px;max-height:calc(100vh - 120px);}
-  .statusbar{display:flex;justify-content:space-between;padding:10px 18px 4px;font-family:var(--mono);font-size:11.5px;color:var(--inkSoft);}
-  .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 16px 20px;}
-  .bottomnav{display:flex;border-top:1px solid var(--line);background:var(--card);}
+  /* viste a tutto schermo */
+  .appwrap{flex:1;display:flex;flex-direction:column;min-height:0;}
+  .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px max(16px,calc(50% - 280px)) 24px;}
+  .bottomnav{display:flex;border-top:1px solid var(--line);background:var(--card);flex-shrink:0;padding:0 max(0px,calc(50% - 280px)) env(safe-area-inset-bottom);}
   .bottomnav button{flex:1;padding:9px 0 11px;border:none;background:transparent;color:var(--inkSoft);border-top:2.5px solid transparent;font-weight:500;font-size:10.5px;}
   .bottomnav button.active{color:var(--primary);border-top-color:var(--primary);font-weight:700;}
   .bottomnav .ic{font-size:18px;margin-bottom:1px;}
 
   /* desktop dashboard */
-  .desk{max-width:980px;margin:0 auto;background:var(--bg);border-radius:14px;border:1px solid #C9D4D8;box-shadow:0 8px 30px rgba(21,38,44,.10);overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 120px);}
-  .deskhead{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-shrink:0;}
-  .deskbody{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px;}
+  .deskbody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px max(20px,calc(50% - 480px)) 32px;}
 
   h1,h2{margin:0;}
   details summary{cursor:pointer;font-size:13.5px;color:var(--primary);font-weight:600;}
   .pill{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 13px;font-size:13px;}
   .pill.active{border-color:var(--primary);background:var(--primarySoft);color:var(--primary);}
 
-  /* mobile: meno padding, più spazio per il frame, niente bordi che sprecano verticale */
+  /* mobile: app bar compatta, pulsante ruolo a sola icona */
   @media (max-width:480px){
-    body{padding:10px 8px;}
-    .phone{height:calc(100vh - 100px);max-height:760px;border-radius:22px;}
-    .previewbar{margin-bottom:10px;}
-    .desk{border-radius:10px;max-height:calc(100vh - 90px);}
+    .appbar{padding-left:12px;padding-right:12px;}
+    .rolebtn{padding:7px 10px;}
+    .rolebtn .rlabel{display:none;}
     .deskbody{padding:14px;}
-    .deskhead{flex-wrap:wrap;gap:4px;}
   }
 </style>
 </head>
 <body>
 
-<div class="previewbar">
-  <div>
-    <div style="font-weight:700;font-size:16px;">MG-Sense · <span style="font-weight:600;">Digital Biomarkers per la Miastenia Gravis</span></div>
-    <div style="font-size:12px;color:var(--inkSoft);">Anteprima funzionale</div>
+<header class="appbar">
+  <div class="brand">
+    <img src="icons/icon-192.png" alt="" onerror="this.style.display='none'">
+    <div style="min-width:0;">
+      <div class="brandname">MG-Sense</div>
+      <div class="brandsub" id="appSub">Digital biomarkers per la miastenia gravis</div>
+    </div>
   </div>
-  <div class="toggle">
-    <button id="vw-patient" class="active" onclick="setView('patient')">📱 Vista paziente</button>
-    <button id="vw-clin" onclick="setView('clinician')">🖥️ Vista medico</button>
-  </div>
-  <div id="envDiag" style="flex-basis:100%;"></div>
-</div>
+  <button class="rolebtn" id="roleBtn" onclick="toggleRole()" aria-label="Passa alla vista medico" title="Passa alla vista medico">
+    <span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>
+  </button>
+</header>
+<div id="envDiag" style="flex-shrink:0;"></div>
 
 <!-- ============ VISTA PAZIENTE ============ -->
-<div id="patientView">
-  <div class="phone">
-    <div class="statusbar"><span>09:41</span><span>▮▮▮ 100%</span></div>
-    <div class="screen" id="screen">
+<div id="patientView" class="appwrap">
+  <div class="screen" id="screen">
       <div class="card" style="margin-top:20px;padding:18px;border-left:4px solid #B3372E;">
         <div style="font-weight:700;font-size:15px;color:#B3372E;">⚠ JavaScript non attivo</div>
         <div style="margin-top:8px;font-size:13.5px;line-height:1.6;">
@@ -119,19 +118,12 @@
         </div>
       </div>
     </div>
-    <nav class="bottomnav" id="nav" aria-label="Navigazione principale"></nav>
-  </div>
+  <nav class="bottomnav" id="nav" aria-label="Navigazione principale"></nav>
 </div>
 
 <!-- ============ VISTA MEDICO ============ -->
-<div id="clinicianView" class="hidden">
-  <div class="desk">
-    <div class="deskhead">
-      <div style="font-weight:700;font-size:15px;"><span style="color:var(--primary);">◆</span> MG-Sense Clinic · Dashboard medico</div>
-      <div class="mono" style="font-size:12.5px;color:var(--inkSoft);">Dr. Manera · Ambulatorio Malattie Neuromuscolari</div>
-    </div>
-    <div class="deskbody" id="clinBody"></div>
-  </div>
+<div id="clinicianView" class="appwrap hidden">
+  <div class="deskbody" id="clinBody"></div>
 </div>
 
 <script>
@@ -140,7 +132,7 @@ const D1=[62,64,61,66,65,69,71,70,74,73];  // oculare
 const D2=[40,41,39,38,40,37,35,36,33,34];  // bulbare
 const D3=[55,54,56,55,53,55,54,56,55,54];  // motorio
 
-const C={primary:'#0F5E63',alert:'#B3372E',warn:'#B07614',ok:'#2E7D4F',inkSoft:'#5A6E75'};
+const C={primary:'#2E7D4F',alert:'#B3372E',warn:'#B07614',ok:'#2E7D4F',inkSoft:'#5A6E75'};
 
 /* ---------- helper SVG sparkline ---------- */
 function spark(data,baseline,color,h=44,w=280){
@@ -1173,36 +1165,46 @@ function render(){
     </button>`).join('');
   document.getElementById('screen').scrollTop=0;
 }
-function setView(v){
-  const patient=v==='patient';
+let role='patient';
+function setRole(r){
+  role=r;
+  const patient=role==='patient';
   document.getElementById('patientView').classList.toggle('hidden',!patient);
   document.getElementById('clinicianView').classList.toggle('hidden',patient);
-  document.getElementById('vw-patient').classList.toggle('active',patient);
-  document.getElementById('vw-clin').classList.toggle('active',!patient);
+  // il pulsante mostra l'icona della vista verso cui si passa
+  const btn=document.getElementById('roleBtn');
+  btn.innerHTML=patient
+    ? '<span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>'
+    : '<span class="ric" aria-hidden="true">🙂</span><span class="rlabel">Paziente</span>';
+  const lbl=patient?'Passa alla vista medico':'Passa alla vista paziente';
+  btn.setAttribute('aria-label',lbl);
+  btn.setAttribute('title',lbl);
+  document.getElementById('appSub').textContent=patient
+    ? 'Digital biomarkers per la miastenia gravis'
+    : 'Dashboard medico · Dr. Manera';
   if(!patient) renderClin();
 }
+function toggleRole(){ setRole(role==='patient'?'clinician':'patient'); }
 
-/* Diagnostica d'ambiente: spiega subito perché i permessi possono non comparire */
+/* Diagnostica d'ambiente: nell'app completa compare solo se c'è un problema reale */
 function envCheck(){
   const el=document.getElementById('envDiag');
   if(!el) return;
   const isFile=location.protocol==='file:';
   const secure=window.isSecureContext===true && !isFile;
   const media=!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  const motion=('DeviceOrientationEvent' in window)||('DeviceMotionEvent' in window)||('Accelerometer' in window);
-  const chip=(ok,label)=>`<span class="badge ${ok?'ok':'warn'}" style="margin-right:6px;">${ok?'✓':'✕'} ${label}</span>`;
   let warn='';
   if(!secure){
-    warn=`<div class="card" style="margin-top:8px;padding:10px 12px;background:var(--warnSoft);border:1px solid var(--warn);font-size:12.5px;line-height:1.55;color:#7A5510;">
+    warn=`<div class="card" style="padding:10px 12px;background:var(--warnSoft);border:1px solid var(--warn);font-size:12.5px;line-height:1.55;color:#7A5510;">
       ⚠ Pagina aperta da <b>${isFile?'file://':(location.protocol||'?')}</b> e non da https: molti browser <b>non mostrano le richieste di permesso</b> e <b>interrompono il flusso dei sensori</b> dopo la prima lettura. In quel caso i test passano automaticamente alla <b>demo simulata</b>.
       Per la misura reale pubblica questo file su <b>https</b> (es. GitHub Pages, Netlify Drop) e apri quell'indirizzo dal telefono.
     </div>`;
   }else if(!media){
-    warn=`<div class="card" style="margin-top:8px;padding:10px 12px;background:var(--warnSoft);border:1px solid var(--warn);font-size:12.5px;color:#7A5510;">
+    warn=`<div class="card" style="padding:10px 12px;background:var(--warnSoft);border:1px solid var(--warn);font-size:12.5px;color:#7A5510;">
       ⚠ Questo browser non espone fotocamera/microfono: i test relativi useranno la demo simulata.
     </div>`;
   }
-  el.innerHTML=`<div style="margin-top:8px;font-size:11.5px;color:var(--inkSoft);">Ambiente: ${chip(secure,'https')}${chip(media,'fotocamera/microfono')}${chip(motion,'sensori movimento')}</div>${warn}`;
+  el.innerHTML=warn?`<div style="padding:10px max(16px,calc(50% - 280px)) 0;">${warn}</div>`:'';
 }
 
 /* init */
