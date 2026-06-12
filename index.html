@@ -241,12 +241,12 @@ const testSteps=[
   {icon:"🫁",sensor:"Microfono",label:"Respiratorio — single-breath count",hint:"Fai un respiro profondo e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. Il microfono misura la durata della fonazione, indicatore validato della riserva respiratoria nella MG."},
 ];
 function anyTestRunning(){
-  return eyeTest.phase==='running' || voiceTest.phase==='running' || armDrift.phase==='running' || sbcTest.phase==='running';
+  return eyeTest.phase==='running' || voiceTest.phase==='running' || armDrift.phase==='running' || armDrift.phase==='align' || sbcTest.phase==='running';
 }
 function stopAllTests(){
   if(eyeTest.phase==='running') eyeStop(true);
   if(voiceTest.phase==='running') voiceStop(true);
-  if(armDrift.phase==='running') armStop(true);
+  if(armDrift.phase==='running'||armDrift.phase==='align') armStop(true);
   if(sbcTest.phase==='running') sbcStop(true);
 }
 function finishSession(){
@@ -273,11 +273,11 @@ function mediaNote(kind){
    desktop dove i sensori di movimento non sono disponibili.
    ============================================================ */
 const armDrift={
-  phase:'idle',          // idle | running | done
+  phase:'idle',          // idle | align | running | done
   supported:('DeviceOrientationEvent' in window) || ('DeviceMotionEvent' in window),
   source:null,           // 'orientation' | 'motion' | 'sim'
   gotSamples:0,          // quanti eventi sensore reali sono arrivati
-  startAngle:null,       // angolo di riferimento all'avvio (braccio teso)
+  startAngle:null,       // angolo di riferimento calibrato in orizzontale
   curAngle:null,         // ultimo angolo letto
   samples:[],            // serie temporale del drift (gradi sotto la partenza)
   tremorBuf:[],          // buffer per stima del tremore
@@ -292,7 +292,33 @@ const armDrift={
   lastSampleAt:0,        // timestamp dell'ultima lettura valida (stall detection)
   accel:null,            // istanza Generic Sensor API (Accelerometer), se disponibile
   fellBack:false,        // true se passato a simulazione per assenza/stallo dati
+  alignTimer:null,       // loop della fase di allineamento
+  alignSince:null,       // da quando il telefono è in piano
+  alignT0:0,
+  lastBeep:-1,           // ultimo secondo segnalato col bip
 };
+
+/* segnali acustici del test motorio (Web Audio, creato dal gesto sul tasto Avvia) */
+let armAudio=null;
+function armBeep(freq,dur,vol){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    if(!armAudio) armAudio=new AC();
+    if(armAudio.state==='suspended') armAudio.resume().catch(()=>{});
+    const t=armAudio.currentTime;
+    const o=armAudio.createOscillator(), g=armAudio.createGain();
+    o.type='sine'; o.frequency.value=freq||880;
+    g.gain.setValueAtTime(vol||0.22,t);
+    g.gain.exponentialRampToValueAtTime(0.001,t+(dur||0.08));
+    o.connect(g); g.connect(armAudio.destination);
+    o.start(t); o.stop(t+(dur||0.08)+0.02);
+  }catch(_){}
+}
+function armSecondBeep(elapsed){
+  const s=Math.floor(elapsed);
+  if(s>armDrift.lastBeep){ armDrift.lastBeep=s; armBeep(880,0.07,0.2); }
+}
 
 // Inclinazione avanti/indietro in gradi.
 // Preferiamo DeviceOrientation.beta (già in gradi); fallback su accelerometro.
@@ -306,8 +332,9 @@ function registerAngle(angle){
   if(angle==null || isNaN(angle)) return;
   armDrift.gotSamples++;
   armDrift.lastSampleAt=performance.now();
-  if(armDrift.startAngle==null){ armDrift.startAngle=angle; armDrift.lastAngle=angle; }
   armDrift.curAngle=angle;
+  if(armDrift.phase!=='running') return;   // fase di allineamento: solo lettura dell'angolo
+  if(armDrift.startAngle==null){ armDrift.startAngle=angle; armDrift.lastAngle=angle; }
   // drift = quanto il braccio è sceso rispetto alla posizione iniziale (valore assoluto della variazione)
   const drift=Math.abs(angle - armDrift.startAngle);
   // tremore: variabilità istantanea fra letture consecutive
@@ -319,7 +346,7 @@ function registerAngle(angle){
 }
 
 function onOrientation(e){
-  if(armDrift.phase!=='running') return;
+  if(armDrift.phase!=='running' && armDrift.phase!=='align') return;
   // beta: inclinazione fronte-retro (-180..180). gamma: laterale.
   let a = (e.beta!=null) ? e.beta : null;
   if(a==null && e.gamma!=null) a = e.gamma;
@@ -327,7 +354,7 @@ function onOrientation(e){
 }
 
 function onMotion(e){
-  if(armDrift.phase!=='running') return;
+  if(armDrift.phase!=='running' && armDrift.phase!=='align') return;
   // usato solo se DeviceOrientation non fornisce dati
   const g=e.accelerationIncludingGravity || e.acceleration;
   registerAngle(pitchFromGravity(g));
@@ -337,6 +364,7 @@ function armTick(){
   if(armDrift.phase!=='running') return;
   const elapsed=(performance.now()-armDrift.t0)/1000;
   armDrift.holdTime=elapsed;
+  armSecondBeep(elapsed);
   // Stall detection: i sensori non rispondono o il flusso si è interrotto
   // (alcuni browser, specie da file://, emettono un solo evento e poi tacciono)
   const stalled = armDrift.gotSamples===0
@@ -355,8 +383,8 @@ function armTick(){
   const drift=armDrift.startAngle!=null ? Math.abs((armDrift.curAngle??armDrift.startAngle)-armDrift.startAngle) : 0;
   // un campione di drift ogni ~0.3s per il grafico
   if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
-  // stop automatico: tempo scaduto o braccio caduto oltre 35°
-  if(elapsed>=armDrift.duration || armDrift.maxDrift>=35){ armStop(); return; }
+  // stop automatico: tempo scaduto o braccio che cede oltre 30°
+  if(elapsed>=armDrift.duration || armDrift.maxDrift>=30){ armStop(); return; }
   updateArmLive(elapsed, drift);
 }
 
@@ -365,14 +393,15 @@ function armTickSim(){
   if(armDrift.phase!=='running') return;
   const elapsed=(performance.now()-armDrift.t0)/1000;
   armDrift.holdTime=elapsed;
+  armSecondBeep(elapsed);
   // modello: drift cresce con curva accelerata + rumore (tremore)
-  const base = Math.pow(elapsed/armDrift.duration, 1.8)*30;
+  const base = Math.pow(elapsed/armDrift.duration, 1.6)*34;
   const noise = (Math.random()-0.5)*3;
   const drift = Math.max(0, base+noise);
   armDrift.maxDrift=Math.max(armDrift.maxDrift, drift);
   armDrift.tremor = 0.6 + Math.abs(noise)*0.4;
   if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
-  if(elapsed>=armDrift.duration || armDrift.maxDrift>=35){ armStop(); return; }
+  if(elapsed>=armDrift.duration || armDrift.maxDrift>=30){ armStop(); return; }
   updateArmLive(elapsed, drift);
 }
 
@@ -409,11 +438,18 @@ async function armStart(){
     }
   }catch(_){ /* alcuni browser lanciano se non in risposta a gesto: ignora */ }
 
-  // reset completo dello stato
+  // l'AudioContext nasce qui, dentro il gesto dell'utente: i bip saranno autorizzati
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(AC && !armAudio) armAudio=new AC();
+    if(armAudio && armAudio.state==='suspended') armAudio.resume().catch(()=>{});
+  }catch(_){}
+
+  // reset completo: si parte dalla fase di allineamento, non dalla registrazione
   Object.assign(armDrift,{
-    phase:'running', source:null, gotSamples:0, startAngle:null, curAngle:null,
+    phase:'align', source:null, gotSamples:0, startAngle:null, curAngle:null,
     samples:[], tremorBuf:[], tremor:0, maxDrift:0, holdTime:0, lastAngle:0,
-    fellBack:false, t0:performance.now()
+    fellBack:false, alignSince:null, lastBeep:-1, alignT0:performance.now()
   });
   render();
 
@@ -424,30 +460,85 @@ async function armStart(){
     window.addEventListener('deviceorientation', onOrientation, true);
   }
   if(granted && hasMotion){
-    // anche come ridondanza: se orientation non emette, motion può farlo
     window.addEventListener('devicemotion', onMotion);
     if(!armDrift.source) armDrift.source='motion';
   }
-  // Terza sorgente: Generic Sensor API (flusso continuo affidabile su Chrome/Android)
   try{
     if('Accelerometer' in window){
       armDrift.accel=new Accelerometer({frequency:30});
       armDrift.accel.addEventListener('reading',()=>{
-        if(armDrift.phase!=='running' || armDrift.fellBack) return;
+        if((armDrift.phase!=='running' && armDrift.phase!=='align') || armDrift.fellBack) return;
         registerAngle(pitchFromGravity({x:armDrift.accel.x,y:armDrift.accel.y,z:armDrift.accel.z}));
       });
       armDrift.accel.addEventListener('error',()=>{});
       armDrift.accel.start();
       if(!armDrift.source) armDrift.source='accelerometer';
     }
-  }catch(_){ /* API assente o permesso negato: restano orientation/motion */ }
-  if(granted && (hasOrient||hasMotion||armDrift.accel)){
-    armDrift.raf=setInterval(armTick,50);
-  }else{
-    // nessun sensore (es. desktop) → demo simulata
-    armDrift.source='sim';
-    armDrift.simTimer=setInterval(armTickSim,50);
+  }catch(_){}
+  if(!granted || (!hasOrient && !hasMotion && !armDrift.accel)){
+    armDrift.source='sim';   // nessun sensore: l'allineamento mostrerà l'avviso e partirà la demo
   }
+  armDrift.alignTimer=setInterval(alignLoop,100);
+}
+
+/* fase di allineamento: aspetta che il telefono sia in piano (|angolo| ≤ 8° per 0,7 s) */
+function alignLoop(){
+  if(armDrift.phase!=='align') return;
+  const now=performance.now(), elapsed=(now-armDrift.alignT0)/1000;
+  // sensori assenti o muti → breve avviso, poi demo simulata
+  const dead = armDrift.source==='sim'
+    || (armDrift.gotSamples===0 && elapsed>1.4)
+    || (armDrift.gotSamples>0 && elapsed>2.8 && now-armDrift.lastSampleAt>1500);
+  if(dead){
+    armDrift.source='sim';
+    updateAlign(null,true);
+    if(elapsed>2.6) armGo();
+    return;
+  }
+  const a=armDrift.curAngle;
+  if(a!=null){
+    if(Math.abs(a)<=8){
+      if(!armDrift.alignSince) armDrift.alignSince=now;
+      if(now-armDrift.alignSince>=700){ armBeep(660,0.12,0.25); armGo(); return; }
+    }else armDrift.alignSince=null;
+  }
+  updateAlign(a,false);
+}
+
+function updateAlign(a,simMode){
+  const el=document.getElementById('armAlign');
+  if(!el) return;
+  const st=el.querySelector('#armAlignStatus');
+  if(simMode){ if(st) st.textContent='sensori non disponibili: parte la demo simulata…'; return; }
+  if(a==null){ if(st) st.textContent='in attesa dei sensori… muovi leggermente il telefono'; return; }
+  const val=el.querySelector('#armTiltVal');
+  if(val) val.textContent=Math.abs(a).toFixed(0)+'°';
+  const dot=el.querySelector('#armBubble');
+  if(dot){
+    const x=Math.max(-1,Math.min(1,a/45))*70;
+    dot.style.transform=`translateX(${x}px)`;
+    dot.style.background=Math.abs(a)<=8?'var(--ok)':'var(--warn)';
+  }
+  if(st) st.textContent=Math.abs(a)<=8?'perfetto: tieni fermo…':'inclina finché il punto è al centro';
+}
+
+/* allineamento riuscito: calibra lo zero sull'orizzontale e avvia la registrazione */
+function armGo(){
+  if(armDrift.alignTimer){ clearInterval(armDrift.alignTimer); armDrift.alignTimer=null; }
+  Object.assign(armDrift,{
+    phase:'running', t0:performance.now(), lastBeep:-1,
+    samples:[], tremorBuf:[], tremor:0, maxDrift:0, holdTime:0,
+    startAngle:armDrift.source==='sim'?0:armDrift.curAngle,
+    lastAngle:armDrift.source==='sim'?0:(armDrift.curAngle??0),
+    fellBack:armDrift.source==='sim'
+  });
+  if(armDrift.source==='sim'){
+    armFreeSensors();
+    armDrift.simTimer=setInterval(armTickSim,50);
+  }else{
+    armDrift.raf=setInterval(armTick,50);
+  }
+  render();
 }
 
 function armFreeSensors(){
@@ -457,10 +548,13 @@ function armFreeSensors(){
 }
 
 function armStop(abort){
+  const wasRunning=armDrift.phase==='running';
   armFreeSensors();
   if(armDrift.raf){ clearInterval(armDrift.raf); armDrift.raf=null; }
   if(armDrift.simTimer){ clearInterval(armDrift.simTimer); armDrift.simTimer=null; }
+  if(armDrift.alignTimer){ clearInterval(armDrift.alignTimer); armDrift.alignTimer=null; }
   armDrift.phase=abort===true?'idle':'done';
+  if(wasRunning && abort!==true) armBeep(520,0.4,0.3);   // tono di fine task
   render();
 }
 
@@ -474,7 +568,7 @@ function armInterpret(){
   const {holdTime,maxDrift,tremor}=armDrift;
   let tone='ok', txt='';
   if(holdTime>=28 && maxDrift<10){ tone='ok'; txt='Tenuta completa con drift minimo: forza prossimale conservata.'; }
-  else if(maxDrift>=35 || holdTime<12){ tone='alert'; txt='Caduta precoce del braccio: debolezza prossimale affaticabile marcata.'; }
+  else if(maxDrift>=30 || holdTime<12){ tone='alert'; txt='Caduta precoce del braccio: debolezza prossimale affaticabile marcata.'; }
   else { tone='warn'; txt='Drift moderato prima del termine: lieve affaticabilità prossimale da monitorare.'; }
   if(tremor>1.5) txt+=' Tremore aumentato durante la tenuta.';
   return {tone,txt};
@@ -488,7 +582,7 @@ function armCard(){
         <div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>
         <div style="margin-top:12px;font-weight:700;font-size:15px;">Motorio — arm drift e test di resistenza</div>
         <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
-          Tieni il telefono appoggiato sul palmo, braccio teso in avanti all'altezza della spalla. Mantieni la posizione il più a lungo possibile: il test si ferma da solo dopo ${armDrift.duration}s o se il braccio scende troppo.
+          Appoggia il telefono sul palmo, braccio teso in avanti all'altezza della spalla. Prima ti chiederemo di metterlo <b>in orizzontale</b>: quando è in piano la registrazione parte da sola, con un <b>bip ogni secondo</b> fino alla fine. Il test termina dopo ${armDrift.duration}s o appena il braccio cede (oltre 30°).
         </div>
         ${(()=>{
           const fileProto = location.protocol==='file:';
@@ -498,6 +592,26 @@ function armCard(){
           return `<div style="margin-top:10px;font-size:12px;color:var(--inkSoft);">Su iPhone potrebbe comparire una richiesta di accesso ai sensori di movimento: tocca <b>Consenti</b>.</div>`;
         })()}
         <button class="btn primary full" style="margin-top:16px;" onclick="armStart()">Avvia test motorio</button>
+      </div>`;
+  }
+  if(armDrift.phase==='align'){
+    return `
+      <div class="card" id="armAlign" style="margin-top:16px;padding:20px;text-align:center;">
+        <span class="badge neutral">preparazione</span>
+        <div aria-hidden="true" style="font-size:42px;margin-top:10px;">📱</div>
+        <div style="margin-top:10px;font-weight:700;font-size:15px;">Metti il telefono in orizzontale</div>
+        <div style="margin-top:8px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">
+          Appoggialo sul palmo con lo schermo verso l'alto, braccio teso in avanti all'altezza della spalla. Quando è in piano la registrazione parte da sola, con un bip ogni secondo.
+        </div>
+        <div style="margin:18px auto 6px;width:180px;">
+          <div style="position:relative;height:26px;background:var(--line);border-radius:999px;">
+            <div style="position:absolute;left:50%;top:0;width:40px;height:100%;transform:translateX(-50%);background:var(--okSoft);border-radius:999px;"></div>
+            <div id="armBubble" style="position:absolute;left:50%;top:4px;width:18px;height:18px;margin-left:-9px;border-radius:999px;background:var(--warn);transition:transform .1s,background .2s;"></div>
+          </div>
+          <div class="mono" id="armTiltVal" style="margin-top:6px;font-size:15px;font-weight:600;color:var(--primary);">—</div>
+        </div>
+        <div id="armAlignStatus" style="font-size:12px;color:var(--inkSoft);">in attesa dei sensori…</div>
+        <button class="btn full" style="margin-top:14px;" onclick="armStop(true)">Annulla</button>
       </div>`;
   }
   if(armDrift.phase==='running'){
@@ -1548,7 +1662,7 @@ function setRole(r){
   const btn=document.getElementById('roleBtn');
   btn.innerHTML=patient
     ? '<span class="ric" aria-hidden="true">👨‍⚕️</span><span class="rlabel">Medico</span>'
-    : '<span class="ric" aria-hidden="true">🙂</span><span class="rlabel">Paziente</span>';
+    : '<span class="ric" aria-hidden="true">🧍</span><span class="rlabel">Paziente</span>';
   const lbl=patient?'Passa alla vista medico':'Passa alla vista paziente';
   btn.setAttribute('aria-label',lbl);
   btn.setAttribute('title',lbl);
