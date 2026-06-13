@@ -705,10 +705,10 @@ function chkBegin(){
 /* ============================================================
    MGVoice — voce unificata
      • SET.voiceMode = 'system'  -> sintesi del dispositivo (gratis, peso zero, offline)
-     • SET.voiceMode = 'kokoro'  -> modello neurale on-device Kokoro (im_nicola, ~82 MB)
+     • SET.voiceMode = 'google'  -> voce naturale cloud (Google TTS via Edge Function),
+                                     con prompt fissi pre-renderizzati e cache condivisa
    Il resto dell'app usa solo MGVoice.speak()/cancel(): non sa quale motore è attivo.
-   In 'kokoro', finché il modello non è pronto si parla con la voce di sistema, così
-   l'assistente non resta muto durante il download; ogni errore ricade sul sistema.
+   In 'google' ogni errore di rete ricade automaticamente sulla voce di sistema.
    ============================================================ */
 const MGVoice = (function(){
   /* ---------- livello 1: voce di sistema ---------- */
@@ -737,64 +737,70 @@ const MGVoice = (function(){
   }
   try{ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>{ try{speechSynthesis.getVoices();}catch(_){} }; } }catch(_){}
 
-  /* ---------- livello 2: Kokoro on-device ---------- */
-  const KOKORO_LIB='https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
-  const KOKORO_MODEL='onnx-community/Kokoro-82M-v1.0-ONNX';
-  const KOKORO_VOICE='im_nicola';            // italiano maschile
-  let kSt='idle';                            // idle | loading | ready | failed
-  let kTTS=null, kLoading=null, kQueue=[], kBusy=false, kAudio=null;
-  const hasWebGPU=()=> typeof navigator!=='undefined' && !!navigator.gpu;
-  function floatToWav(samples,sr){
-    const n=samples.length, buf=new ArrayBuffer(44+n*2), dv=new DataView(buf);
-    const wr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
-    wr(0,'RIFF'); dv.setUint32(4,36+n*2,true); wr(8,'WAVE'); wr(12,'fmt ');
-    dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,1,true);
-    dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true); dv.setUint16(32,2,true); dv.setUint16(34,16,true);
-    wr(36,'data'); dv.setUint32(40,n*2,true);
-    let o=44; for(let i=0;i<n;i++){ const s=Math.max(-1,Math.min(1,samples[i])); dv.setInt16(o,s<0?s*0x8000:s*0x7FFF,true); o+=2; }
-    return new Blob([buf],{type:'audio/wav'});
+  /* ---------- livello 2: voce cloud (Google TTS via Edge Function, con cache condivisa) ---------- */
+  const TTS_FN = (typeof MG_CONFIG!=='undefined' && MG_CONFIG.SUPABASE_URL) ? MG_CONFIG.SUPABASE_URL+'/functions/v1/tts' : null;
+  const TTS_VOICE = (typeof MG_CONFIG!=='undefined' && MG_CONFIG.TTS_CLOUD_VOICE) || 'it-IT-Wavenet-D';
+  const PRERENDERED = {};            // testo fisso → file statico pre-renderizzato (stessa voce): niente chiamata a runtime
+  try{ if(typeof CHK_Q!=='undefined') CHK_Q.forEach(x=>{ PRERENDERED[x.q]='./audio/chk-'+x.key+'.mp3'; }); }catch(_){}
+  const cUrlCache=new Map();         // testo → url audio (cache di sessione, per dispositivo)
+  let cQueue=[], cBusy=false, cAudio=null;
+  function cPlay(url,onend,fallbackText){
+    cAudio=new Audio(url);
+    cAudio.onended=cAudio.onerror=()=>{ cAudio=null; cBusy=false; try{onend&&onend();}catch(_){} cProcess(); };
+    cAudio.play().catch(()=>{ cAudio=null; cBusy=false; sysSpeak(fallbackText,()=>{ try{onend&&onend();}catch(_){} cProcess(); }); });
   }
-  function ensureKokoro(){
-    if(kSt==='ready') return Promise.resolve(kTTS);
-    if(kLoading) return kLoading;
-    kSt='loading';
-    if(typeof toast==='function') toast('Voce naturale: scarico il modello (~82 MB, una volta sola)…');
-    kLoading=(async()=>{
-      const mod=await import(KOKORO_LIB);
-      const KokoroTTS=mod.KokoroTTS||(mod.default&&mod.default.KokoroTTS);
-      if(!KokoroTTS) throw new Error('kokoro-js non disponibile');
-      const load=(device)=>KokoroTTS.from_pretrained(KOKORO_MODEL,{dtype:'q8',device});
-      try{ kTTS=await load(hasWebGPU()?'webgpu':'wasm'); }
-      catch(_){ kTTS=await load('wasm'); }   // ripiego su WASM se WebGPU non parte
-      kSt='ready';
-      if(typeof toast==='function') toast('Voce naturale pronta');
-      return kTTS;
-    })();
-    kLoading.catch(()=>{ kSt='failed'; kLoading=null; if(typeof toast==='function') toast('Voce naturale non disponibile: uso la voce di sistema'); });
-    return kLoading;
-  }
-  async function kProcess(){
-    if(kBusy) return;
-    const item=kQueue.shift(); if(!item) return;
-    kBusy=true;
-    try{
-      const out=await kTTS.generate(item.text,{voice:KOKORO_VOICE});
-      let blob;
-      if(out && typeof out.toBlob==='function') blob=out.toBlob();
-      else blob=floatToWav(out.audio||out.waveform||[], out.sampling_rate||out.sampleRate||24000);
-      const url=URL.createObjectURL(blob);
-      kAudio=new Audio(url);
-      kAudio.onended=kAudio.onerror=()=>{ try{URL.revokeObjectURL(url);}catch(_){} kAudio=null; kBusy=false; try{item.onend&&item.onend();}catch(_){} kProcess(); };
-      await kAudio.play().catch(()=>{ if(kAudio&&kAudio.onended) kAudio.onended(); });
-    }catch(_){
-      kBusy=false;
-      sysSpeak(item.text, ()=>{ try{item.onend&&item.onend();}catch(_){} kProcess(); });  // fallback per questo pezzo
+  async function cFetchUrl(text){
+    await new Promise(r=>setTimeout(r, 40+Math.floor(Math.random()*260)));    // jitter: sfasa le richieste simultanee
+    let lastErr=null;
+    for(let i=0;i<3;i++){
+      try{
+        const r=await fetch(TTS_FN,{method:'POST',
+          headers:{'Content-Type':'application/json','apikey':MG_CONFIG.SUPABASE_ANON_KEY,'Authorization':'Bearer '+MG_CONFIG.SUPABASE_ANON_KEY},
+          body:JSON.stringify({text,voice:TTS_VOICE})});
+        if(r.status===429||r.status>=500){ lastErr=new Error('HTTP '+r.status); await new Promise(s=>setTimeout(s,400*(i+1))); continue; }  // throttling → backoff
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const j=await r.json(); if(!j.url) throw new Error('risposta senza url');
+        return j.url;
+      }catch(e){ lastErr=e; await new Promise(s=>setTimeout(s,300*(i+1))); }
     }
+    throw lastErr||new Error('tts non disponibile');
   }
-  function kCancel(){
-    kQueue=[];
-    if(kAudio){ try{kAudio.pause();}catch(_){} try{kAudio.src='';}catch(_){} kAudio=null; }
-    kBusy=false;
+  async function cProcess(){
+    if(cBusy) return;
+    const item=cQueue.shift(); if(!item) return;
+    cBusy=true;
+    const cached=cUrlCache.get(item.text);
+    if(cached){ cPlay(cached,item.onend,item.text); return; }                 // 1) cache di sessione
+    const pre=PRERENDERED[item.text];
+    if(pre){ cPlayPrerendered(pre,item); return; }                           // 2) prompt fisso: file statico, con fallback al cloud
+    cFromCloud(item);                                                        // 3) testo dinamico: Edge Function (cache condivisa)
+  }
+  // file statico pre-renderizzato; se manca (404), sintetizza dal cloud e lo mette in cache su Storage
+  function cPlayPrerendered(url,item){
+    let handled=false;
+    const goCloud=()=>{ if(handled) return; handled=true; cAudio=null; cFromCloud(item); };
+    const a=new Audio(url); cAudio=a;
+    a.onended=()=>{ if(handled) return; handled=true; cAudio=null; cBusy=false; try{item.onend&&item.onend();}catch(_){} cProcess(); };
+    a.onerror=goCloud;
+    a.play().catch(goCloud);
+  }
+  async function cFromCloud(item){
+    try{ const url=await cFetchUrl(item.text); cUrlCache.set(item.text,url); cPlay(url,item.onend,item.text); }
+    catch(_){ cBusy=false; sysSpeak(item.text,()=>{ try{item.onend&&item.onend();}catch(_){} cProcess(); }); }   // ripiego: voce di sistema
+  }
+  function cloudSpeak(text,onend){ if(!TTS_FN){ sysSpeak(text,onend); return; } cQueue.push({text,onend}); cProcess(); }
+  function cCancel(){ cQueue=[]; if(cAudio){ try{cAudio.pause();}catch(_){} try{cAudio.src='';}catch(_){} cAudio=null; } cBusy=false; }
+  // pre-scalda le domande fisse del check-in: se il file statico c'è lo lascia, altrimenti
+  // le fa sintetizzare e cachare su Storage UNA volta (così la demo parte già "calda", senza Node).
+  let _warmed=false;
+  async function warmPrompts(){
+    if(_warmed || !TTS_FN || typeof CHK_Q==='undefined') return; _warmed=true;
+    for(const x of CHK_Q){
+      if(cUrlCache.has(x.q)) continue;
+      const pre=PRERENDERED[x.q];
+      if(pre){ try{ const h=await fetch(pre,{method:'HEAD'}); if(h.ok) continue; }catch(_){} }   // file statico presente → ok
+      try{ const u=await cFetchUrl(x.q); cUrlCache.set(x.q,u); }catch(_){}                        // altrimenti sintetizza+cache
+    }
   }
 
   /* ---------- API unificata ---------- */
@@ -802,20 +808,20 @@ const MGVoice = (function(){
     opts=opts||{};
     if(!text || !SET.tts){ if(opts.onend) setTimeout(opts.onend,40); return; }
     if(opts.cancelFirst) cancel();
-    if(SET.voiceMode==='kokoro'){
-      if(kSt==='ready'){ kQueue.push({text,onend:opts.onend}); kProcess(); return; }
-      ensureKokoro();                       // avvia/continua il download
-      sysSpeak(text,opts.onend);            // intanto parla la voce di sistema
-      return;
-    }
+    if(SET.voiceMode==='google'){ cloudSpeak(text,opts.onend); return; }    // voce naturale cloud (Google) + cache
     sysSpeak(text,opts.onend);
   }
   function cancel(){
     try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(_){}
-    kCancel();
+    cCancel();
   }
-  function prepare(){ if(SET.voiceMode==='kokoro') ensureKokoro(); }   // front-load del modello
-  return { speak, cancel, prepare, pickVoice, get state(){ return kSt; } };
+  function prepare(){
+    if(SET.voiceMode==='google' && TTS_FN){ try{ fetch(TTS_FN,{method:'OPTIONS'}); }catch(_){} warmPrompts(); }   // scalda funzione + prompt fissi
+  }
+  function diag(){ return { mode:(typeof SET!=='undefined'?SET.voiceMode:'?'),
+    cloud:!!TTS_FN, voice:TTS_VOICE, endpoint:TTS_FN,
+    cachedInSession:cUrlCache.size, prerendered:Object.keys(PRERENDERED).length }; }
+  return { speak, cancel, prepare, pickVoice, diag };
 })();
 
 function speakQ(){
@@ -1950,10 +1956,10 @@ function openSettings(){
     sw('swTts',SET.tts,'Leggi le domande ad alta voce','sintesi vocale del check-in')+
     '<div class="field" style="margin-top:10px;"><label for="setVoiceMode">Voce dell\u2019assistente</label>'+
       '<select id="setVoiceMode" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink);">'+
-        '<option value="system"'+(SET.voiceMode!=='kokoro'?' selected':'')+'>Voce di sistema · gratuita, offline</option>'+
-        '<option value="kokoro"'+(SET.voiceMode==='kokoro'?' selected':'')+'>Voce naturale (on-device) · ~82 MB al primo uso</option>'+
+        '<option value="system"'+(SET.voiceMode!=='google'?' selected':'')+'>Voce di sistema · gratuita, offline</option>'+
+        '<option value="google"'+(SET.voiceMode==='google'?' selected':'')+'>Voce naturale (cloud) · qualità alta, richiede rete</option>'+
       '</select>'+
-      '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">La voce naturale scarica un modello neurale una sola volta e poi funziona offline; se il dispositivo non la supporta si torna automaticamente alla voce di sistema.</div></div>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">La voce naturale (cloud) usa una voce italiana ad alta qualità; richiede connessione e il testo viene inviato al servizio di sintesi. Senza rete o se non disponibile, si torna automaticamente alla voce di sistema.</div></div>'+
     '<div class="card" style="margin-top:10px;padding:14px;">'+
       '<div style="font-weight:700;font-size:13.5px;">Notifiche push</div>'+
       '<div style="font-size:12px;color:var(--inkSoft);line-height:1.5;margin-top:3px;">Promemoria all\u2019orario scelto anche ad app chiusa. Su iPhone: prima installa l\u2019app in Home (Condividi → Aggiungi a schermata Home).</div>'+
@@ -1977,9 +1983,9 @@ async function saveSettingsUI(){
   SET.tests_time=v('setTests').value||SET.tests_time;
   SET.tests_enabled={ptosi:v('swPtosi').checked,conta:v('swConta').checked,armdrift:v('swArm').checked};
   SET.tts=v('swTts').checked;
-  SET.voiceMode=(v('setVoiceMode')&&v('setVoiceMode').value==='kokoro')?'kokoro':'system';
+  { const vm=v('setVoiceMode')&&v('setVoiceMode').value; SET.voiceMode=(vm==='google')?'google':'system'; }
   saveSettings(); closeSettings(); render();
-  MGVoice.cancel(); MGVoice.prepare();   // applica subito la scelta (eventuale download Kokoro)
+  MGVoice.cancel(); MGVoice.prepare();   // applica subito la scelta voce
   if(SBOK){ await ensurePatient(); refreshData(); toast('Impostazioni salvate e sincronizzate'); }
   else toast('Salvate sul dispositivo');
 }
@@ -2576,19 +2582,19 @@ function askVoiceDownload(done){
     '<div style="text-align:center;padding-top:6px;">'+
       '<div class="pendant idle" style="width:84px;height:84px;margin:4px auto 10px;"><div class="rw"></div><div class="rw r2" style="inset:9px;"></div><div class="rw r3" style="inset:18px;"></div><div class="core" style="inset:25px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="#fff"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></div></div>'+
       '<h2 style="font-size:21px;">La voce di Horus</h2>'+
-      '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">Vuoi attivare la <b>voce naturale</b> di Horus? Si scarica una sola volta un modello (~82 MB), poi funziona <b>offline</b> e il testo non lascia il dispositivo. In alternativa uso la <b>voce di sistema</b> del telefono (gratis, nessun download).</div>'+
+      '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">Vuoi attivare la <b>voce naturale</b> di Horus? È una voce italiana ad alta qualità; richiede <b>connessione</b> (il testo viene inviato al servizio di sintesi). In alternativa uso la <b>voce di sistema</b> del telefono (gratis, offline).</div>'+
     '</div>'+
-    '<button class="btn voice full" style="margin-top:16px;" onclick="voicePick(\u0027kokoro\u0027)">Sì, scarica la voce naturale (~82 MB)</button>'+
+    '<button class="btn voice full" style="margin-top:16px;" onclick="voicePick(\u0027google\u0027)">Sì, usa la voce naturale</button>'+
     '<button class="btn full" style="margin-top:10px;" onclick="voicePick(\u0027system\u0027)">No, usa la voce di sistema</button>'+
     '<div style="font-size:11.5px;color:var(--inkSoft);text-align:center;margin-top:12px;line-height:1.45;">Puoi cambiare quando vuoi da Impostazioni → Voce dell\u2019assistente.</div>'+
   '</div></div>';
 }
 function voicePick(choice){
   SET.voiceAsked=true;
-  if(choice==='kokoro') SET.voiceMode='kokoro';
+  if(choice==='google') SET.voiceMode='google';
   saveSettings();
   const r=document.getElementById('onboardRoot'); if(r) r.innerHTML='';
-  if(choice==='kokoro' && typeof MGVoice!=='undefined') MGVoice.prepare();
+  if(choice==='google' && typeof MGVoice!=='undefined') MGVoice.prepare();
   const d=_voiceAskDone; _voiceAskDone=null; if(typeof d==='function') d();
 }
 
