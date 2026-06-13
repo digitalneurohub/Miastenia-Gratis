@@ -71,6 +71,18 @@ const C={primary:'#2D7A52',voice:'#1F6E78',alert:'#B3372E',warn:'#A8730F',inkSof
 let sb=null;
 const DB={patients:[],daily:[],scales:[],tests:[],alerts:[],baselines:[],meds:[],intakes:[]};
 let selId=null;
+let selParam='vocal_index';
+/* parametri vocali aggregati (colonne della vista vocal_daily).
+   dir: come leggere un aumento — higherWorse (peggio se sale), higherBetter (meglio se sale), neutral. */
+const PARAMS=[
+  {k:'vocal_index',     label:'Indice vocale',   unit:'',    dec:0, dir:'higherWorse',  base:50, hint:'composito · 50 = baseline, ↑ = peggio'},
+  {k:'hnr',             label:'HNR',             unit:' dB', dec:1, dir:'higherBetter', hint:'rapporto armonico/rumore · ↑ = meglio'},
+  {k:'shimmer',         label:'Shimmer',         unit:' %',  dec:2, dir:'higherWorse',  hint:'instabilità d\u2019ampiezza · ↑ = peggio'},
+  {k:'jitter',          label:'Jitter',          unit:' %',  dec:2, dir:'higherWorse',  hint:'instabilità di frequenza · ↑ = peggio'},
+  {k:'pause_ratio',     label:'Pause',           unit:' %',  dec:1, dir:'higherWorse',  hint:'quota di pause nell\u2019eloquio · ↑ = peggio'},
+  {k:'intensity_slope', label:'Calo d\u2019intensità', unit:'', dec:2, dir:'higherBetter', base:0, hint:'pendenza dell\u2019intensità · più negativa = voce che cala'},
+  {k:'f0',              label:'F0 media',        unit:' Hz', dec:0, dir:'neutral', hint:'frequenza fondamentale media'},
+];
 
 function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmtD(d){ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }
@@ -140,6 +152,52 @@ function scatterChart(pairs){
     '<text x="'+((padL+w-padR)/2)+'" y="'+(h-1)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'">MG-ADL totale (0–24)</text>'+
     '<text x="11" y="'+((padT+h-padB)/2)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'" transform="rotate(-90 11 '+((padT+h-padB)/2)+')">indice vocale</text></svg>'+
     '<div style="font-size:12px;color:var(--inkSoft);margin-top:5px;">r di Pearson = <b class="mono">'+(r!=null?r.toFixed(2):'—')+'</b> su '+pairs.length+' giornate appaiate (stesso giorno: media indice ↔ totale scala)</div>';
+}
+
+/* ---------- parametri aggregati + drill-down ---------- */
+function paramStats(daily,key){
+  const all=daily.filter(d=>d[key]!=null).map(d=>+d[key]);
+  const last7=avg(all.slice(-7)), prev7=avg(all.slice(-14,-7));
+  const last14=all.slice(-14);
+  return { n:all.length, last:all.length?all[all.length-1]:null,
+    mean7:last7, mean14:avg(last14),
+    min14:last14.length?Math.min(...last14):null, max14:last14.length?Math.max(...last14):null,
+    delta:(last7!=null&&prev7!=null)?last7-prev7:null };
+}
+function paramCard(daily,P){
+  const st=paramStats(daily,P.k), sel=(selParam===P.k);
+  const fav = (st.delta==null||P.dir==='neutral')?null:((P.dir==='higherBetter')===(st.delta>0));
+  const arrow = st.delta==null?'':(st.delta>0?'▲':st.delta<0?'▼':'•');
+  const col = fav==null?'var(--inkSoft)':(fav?'var(--ok)':'var(--alert)');
+  const spark=daily.slice(-14).filter(d=>d[P.k]!=null).map(d=>({x:'',y:+(+d[P.k]).toFixed(3)}));
+  return '<button class="prow'+(sel?' sel':'')+'" style="padding:11px 12px;" onclick="selParam=\u0027'+P.k+'\u0027;draw()" title="'+esc(P.hint)+'">'+
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;">'+
+      '<span style="font-size:12px;font-weight:700;">'+P.label+'</span>'+
+      '<span class="mono" style="font-size:13.5px;">'+(st.last!=null?(+st.last).toFixed(P.dec)+P.unit:'—')+'</span></div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">'+
+      '<span style="font-size:10.5px;color:var(--inkSoft);">media 7g '+(st.mean7!=null?(+st.mean7).toFixed(P.dec)+P.unit:'—')+'</span>'+
+      '<span class="mono" style="font-size:10.5px;color:'+col+';">'+(st.delta!=null?arrow+' '+Math.abs(st.delta).toFixed(P.dec):'')+'</span></div>'+
+    '<div style="margin-top:5px;">'+(spark.length?lineChart(spark,{h:34,color:sel?C.voice:C.inkSoft}):'<div style="font-size:10px;color:var(--inkSoft);padding:8px 0;">nessun dato</div>')+'</div>'+
+  '</button>';
+}
+function paramDetail(daily){
+  const P=PARAMS.find(x=>x.k===selParam)||PARAMS[0];
+  const st=paramStats(daily,P.k);
+  const pts=daily.filter(d=>d[P.k]!=null).slice(-30).map(d=>({x:fmtD(d.day),y:+(+d[P.k]).toFixed(3)}));
+  const opt=Object.assign({color:C.voice,h:180}, P.base!=null?{baseline:P.base}:{});
+  const f=v=>v!=null?(+v).toFixed(P.dec)+P.unit:'—';
+  return '<div class="card" style="border-top:4px solid var(--voice);">'+
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">'+
+      '<div style="font-weight:700;font-size:14.5px;">'+P.label+' <span style="font-weight:400;font-size:12px;color:var(--inkSoft);">'+esc(P.hint)+'</span></div></div>'+
+    '<div class="tiles" style="margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));">'+
+      '<div class="tile"><div class="v" style="font-size:18px;">'+f(st.last)+'</div><div class="l">ultimo giorno</div></div>'+
+      '<div class="tile"><div class="v" style="font-size:18px;">'+f(st.mean7)+'</div><div class="l">media 7 giorni</div></div>'+
+      '<div class="tile"><div class="v" style="font-size:18px;">'+f(st.mean14)+'</div><div class="l">media 14 giorni</div></div>'+
+      '<div class="tile"><div class="v" style="font-size:15px;">'+(st.min14!=null?(+st.min14).toFixed(P.dec)+'–'+(+st.max14).toFixed(P.dec):'—')+'</div><div class="l">range 14 giorni · '+st.n+' gg</div></div>'+
+    '</div>'+
+    '<div style="margin-top:12px;">'+lineChart(pts,opt)+'</div>'+
+    '<div style="font-size:11px;color:var(--inkSoft);margin-top:6px;">Media giornaliera · ultimi 30 giorni.'+(P.base!=null?' Linea tratteggiata = riferimento ('+P.base+').':'')+'</div>'+
+  '</div>';
 }
 
 /* ---------- dati ---------- */
@@ -224,12 +282,6 @@ function draw(){
   scales.forEach(s=>{ const day=s.taken_at.slice(0,10);
     if(!seen.has(day) && dayIdx[day]!=null){ seen.add(day); pairs.push({day, adl:s.total, idx:dayIdx[day]}); } });
 
-  const miniP=(key,label,unit,color)=>{
-    const serie=daily.slice(-14).filter(d=>d[key]!=null).map(d=>({x:'',y:+(+d[key]).toFixed(2)}));
-    const last=serie.length?serie[serie.length-1].y:null;
-    return '<div class="card" style="padding:12px;"><div style="display:flex;justify-content:space-between;"><span style="font-size:12px;font-weight:700;">'+label+'</span><span class="mono" style="font-size:12px;color:var(--inkSoft);">'+(last!=null?last+unit:'—')+'</span></div>'+
-      lineChart(serie,{h:72,color:color||C.inkSoft})+'</div>';
-  };
 
   const testRows=tests.slice(0,8).map(t=>{
     const m=t.metrics||{};
@@ -297,8 +349,10 @@ function draw(){
       '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">MG-ADL totale</div>'+lineChart(adlPts,{color:C.primary,min:0})+'</div>'+
     '</div>'+
 
-    '<div class="seclabel">Parametri grezzi · 14 giorni</div>'+
-    '<div class="charts2">'+miniP('hnr','HNR',' dB',C.primary)+miniP('shimmer','Shimmer','%',C.warn)+miniP('jitter','Jitter','%',C.warn)+miniP('pause_ratio','Pause','%',C.inkSoft)+'</div>'+
+    '<div class="seclabel">Parametri vocali · panoramica</div>'+
+    '<div style="font-size:12px;color:var(--inkSoft);margin:0 2px 9px;line-height:1.5;">Valore dell\u2019ultimo giorno, media a 7 giorni e variazione rispetto alla settimana precedente (verde = miglioramento, rosso = peggioramento). Tocca un parametro per vederne il dettaglio qui sotto.</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">'+PARAMS.map(P=>paramCard(daily,P)).join('')+'</div>'+
+    '<div style="margin-top:13px;">'+paramDetail(daily)+'</div>'+
 
     '<div class="seclabel">Check-in recenti</div>'+
     '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>totale</th><th>farmaci</th><th>item chiave</th><th>affidab.</th></tr></thead><tbody>'+(scaleRows||'<tr><td colspan="5" style="color:var(--inkSoft);">nessun check-in</td></tr>')+'</tbody></table></div>'+
