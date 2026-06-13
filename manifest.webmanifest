@@ -1,30 +1,15 @@
 {
-  "name": "MG-Sense · Digital Biomarkers per la Miastenia Gravis",
-  "short_name": "MG-Sense",
-  "description": "Monitoraggio domiciliare della miastenia gravis: test guidati con sensori (oculare, bulbare, motorio), diario MG-ADL e trend rispetto al baseline personale.",
-  "lang": "it",
+  "name": "Horus — biomarcatori vocali per la miastenia gravis",
+  "short_name": "Horus",
+  "description": "Assistente e monitoraggio vocale per la miastenia gravis (demo).",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#EEF3EE",
   "theme_color": "#2D7A52",
   "icons": [
-    {
-      "src": "icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    },
-    {
-      "src": "icons/icon-maskable-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

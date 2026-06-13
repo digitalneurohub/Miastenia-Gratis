@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Horus · Dashboard medico</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  :root{
+    --bg:#EEF3EE; --card:#FFFFFF; --ink:#1B3A2A; --inkSoft:#61756A; --line:#DDE4DF;
+    --primary:#2D7A52; --primarySoft:#DCEBDF; --voice:#1F6E78; --voiceSoft:#DEEBEC;
+    --ok:#2D7A52; --okSoft:#DCEBDF; --warn:#A8730F; --warnSoft:#F6ECD7; --alert:#B3372E; --alertSoft:#F8E5E2;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Albert Sans',system-ui,sans-serif;color:var(--ink);background:var(--bg);min-height:100vh;}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+  button{font-family:inherit;cursor:pointer;}
+  .wrap{max-width:1120px;margin:0 auto;padding:18px 18px 50px;}
+  header.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .brand img{width:38px;height:38px;border-radius:999px;}
+  .card{background:var(--card);border-radius:18px;padding:16px;box-shadow:0 4px 16px rgba(27,58,42,.05);}
+  .badge{font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;white-space:nowrap;}
+  .badge.ok{background:var(--okSoft);color:var(--ok);} .badge.warn{background:var(--warnSoft);color:var(--warn);}
+  .badge.alert{background:var(--alertSoft);color:var(--alert);} .badge.voice{background:var(--voiceSoft);color:var(--voice);}
+  .badge.neutral{background:var(--primarySoft);color:var(--primary);}
+  .btn{background:var(--card);color:#1B4D33;border:2px solid #C7D7CC;border-radius:999px;padding:9px 16px;font-size:13.5px;font-weight:700;}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .grid{display:grid;grid-template-columns:300px 1fr;gap:16px;margin-top:16px;align-items:start;}
+  @media(max-width:860px){ .grid{grid-template-columns:1fr;} }
+  .plist{display:flex;flex-direction:column;gap:9px;}
+  .prow{all:unset;cursor:pointer;background:var(--card);border-radius:16px;padding:13px 14px;box-shadow:0 3px 12px rgba(27,58,42,.05);border:2px solid transparent;}
+  .prow.sel{border-color:var(--primary);}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+  .tile{background:var(--bg);border-radius:14px;padding:12px;}
+  .tile .v{font-family:'IBM Plex Mono',monospace;font-size:21px;font-weight:600;}
+  .tile .l{font-size:11px;color:var(--inkSoft);margin-top:2px;line-height:1.35;}
+  .seclabel{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkSoft);margin:18px 2px 8px;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--inkSoft);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);}
+  td{padding:7px 8px;border-bottom:1px solid var(--bg);}
+  .charts2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  @media(max-width:760px){ .charts2{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" onerror="this.style.display='none'">
+      <div>
+        <div style="font-weight:700;font-size:17px;" id="brandName">Horus</div>
+        <div style="font-size:12px;color:var(--inkSoft);">Dashboard medico · coorte in monitoraggio vocale</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:9px;align-items:center;">
+      <span class="badge warn">demo — dati non protetti</span>
+      <button class="btn" onclick="loadAll()">Aggiorna</button>
+      <a class="btn" href="index.html" style="text-decoration:none;">App paziente</a>
+    </div>
+  </header>
+  <div id="app" style="margin-top:16px;">
+    <div class="card">Caricamento…</div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const C={primary:'#2D7A52',voice:'#1F6E78',alert:'#B3372E',warn:'#A8730F',inkSoft:'#61756A'};
+let sb=null;
+const DB={patients:[],daily:[],scales:[],tests:[],alerts:[],baselines:[],meds:[],intakes:[]};
+let selId=null;
+
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtD(d){ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }
+function fmtDT(d){ return new Date(d).toLocaleDateString('it-IT',{day:'2-digit',month:'short'})+' '+new Date(d).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); }
+function avg(a){ return a.length?a.reduce((x,y)=>x+y,0)/a.length:null; }
+function pName(p){
+  const fn=(p.first_name||'').trim(), ln=(p.last_name||'').trim();
+  if(fn||ln) return [fn,ln].filter(Boolean).join(' ');
+  return (p.display_name||'').trim();
+}
+
+/* ---------- grafici SVG ---------- */
+function lineChart(pts,opt){
+  // pts: [{x:label, y:number}] in ordine cronologico
+  opt=opt||{};
+  const w=opt.w||460,h=opt.h||150,padL=34,padB=20,padT=8,padR=8;
+  if(!pts || pts.length<2) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">dati insufficienti</div>';
+  const ys=pts.map(p=>p.y).concat(opt.baseline!=null?[opt.baseline]:[]);
+  let mn=Math.min(...ys), mx=Math.max(...ys);
+  if(opt.min!=null) mn=Math.min(mn,opt.min);
+  if(opt.max!=null) mx=Math.max(mx,opt.max);
+  if(mx-mn<1e-6){ mx+=1; mn-=1; }
+  const X=i=>padL+(i/(pts.length-1))*(w-padL-padR);
+  const Y=v=>padT+(1-(v-mn)/(mx-mn))*(h-padT-padB);
+  const path=pts.map((p,i)=>(i?'L':'M')+X(i).toFixed(1)+','+Y(p.y).toFixed(1)).join(' ');
+  const grid=[mn,(mn+mx)/2,mx].map(v=>
+    '<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" stroke="#E5ECE6" stroke-width="1"/>'+
+    '<text x="'+(padL-5)+'" y="'+(Y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="'+C.inkSoft+'">'+(Math.round(v*10)/10)+'</text>').join('');
+  const base=opt.baseline!=null?'<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+Y(opt.baseline).toFixed(1)+'" y2="'+Y(opt.baseline).toFixed(1)+'" stroke="'+C.inkSoft+'" stroke-dasharray="4 4" stroke-width="1.3"/>':'';
+  const lab=(i)=>'<text x="'+X(i).toFixed(1)+'" y="'+(h-5)+'" text-anchor="middle" font-size="9.5" fill="'+C.inkSoft+'">'+esc(pts[i].x)+'</text>';
+  const dots=pts.map((p,i)=>'<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(p.y).toFixed(1)+'" r="2.6" fill="'+(opt.color||C.primary)+'"/>').join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+base+
+    '<path d="'+path+'" fill="none" stroke="'+(opt.color||C.primary)+'" stroke-width="2.2" stroke-linecap="round"/>'+dots+
+    lab(0)+lab(pts.length-1)+'</svg>';
+}
+function pearson(xs,ys){
+  const n=xs.length; if(n<3) return null;
+  const mx=avg(xs),my=avg(ys);
+  let num=0,dx=0,dy=0;
+  for(let i=0;i<n;i++){ num+=(xs[i]-mx)*(ys[i]-my); dx+=(xs[i]-mx)**2; dy+=(ys[i]-my)**2; }
+  const den=Math.sqrt(dx*dy);
+  return den>0?num/den:null;
+}
+function scatterChart(pairs){
+  // pairs: [{adl, idx, day}]
+  const w=460,h=210,padL=40,padB=30,padT=10,padR=12;
+  if(!pairs || pairs.length<3) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Servono almeno 3 giornate con check-in <b>e</b> ascolto della collana nello stesso giorno.</div>';
+  const xs=pairs.map(p=>p.adl), ys=pairs.map(p=>p.idx);
+  const mnX=0, mxX=Math.max(10,Math.max(...xs)+1);
+  const mnY=Math.min(40,Math.min(...ys)-3), mxY=Math.max(60,Math.max(...ys)+3);
+  const X=v=>padL+(v-mnX)/(mxX-mnX)*(w-padL-padR);
+  const Y=v=>padT+(1-(v-mnY)/(mxY-mnY))*(h-padT-padB);
+  const r=pearson(xs,ys);
+  // retta di regressione semplice per leggibilità
+  let reg='';
+  if(r!=null){
+    const mx=avg(xs),my=avg(ys);
+    let num=0,den=0; xs.forEach((x,i)=>{num+=(x-mx)*(ys[i]-my);den+=(x-mx)**2;});
+    if(den>0){ const b=num/den,a=my-b*mx;
+      reg='<line x1="'+X(mnX)+'" y1="'+Y(a+b*mnX).toFixed(1)+'" x2="'+X(mxX)+'" y2="'+Y(a+b*mxX).toFixed(1)+'" stroke="'+C.voice+'" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.7"/>'; }
+  }
+  const gridY=[mnY,(mnY+mxY)/2,mxY].map(v=>'<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" stroke="#E5ECE6"/>'+
+    '<text x="'+(padL-5)+'" y="'+(Y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="'+C.inkSoft+'">'+Math.round(v)+'</text>').join('');
+  const gridX=[0,Math.round(mxX/2),Math.round(mxX)].map(v=>'<text x="'+X(v).toFixed(1)+'" y="'+(h-12)+'" text-anchor="middle" font-size="9.5" fill="'+C.inkSoft+'">'+v+'</text>').join('');
+  const dots=pairs.map(p=>'<circle cx="'+X(p.adl).toFixed(1)+'" cy="'+Y(p.idx).toFixed(1)+'" r="4.4" fill="'+C.voice+'" opacity="0.78"><title>'+esc(p.day)+' · MG-ADL '+p.adl+' · indice '+p.idx.toFixed(1)+'</title></circle>').join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+gridY+reg+dots+gridX+
+    '<text x="'+((padL+w-padR)/2)+'" y="'+(h-1)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'">MG-ADL totale (0–24)</text>'+
+    '<text x="11" y="'+((padT+h-padB)/2)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'" transform="rotate(-90 11 '+((padT+h-padB)/2)+')">indice vocale</text></svg>'+
+    '<div style="font-size:12px;color:var(--inkSoft);margin-top:5px;">r di Pearson = <b class="mono">'+(r!=null?r.toFixed(2):'—')+'</b> su '+pairs.length+' giornate appaiate (stesso giorno: media indice ↔ totale scala)</div>';
+}
+
+/* ---------- dati ---------- */
+async function loadAll(){
+  const app=document.getElementById('app');
+  if(typeof MG_CONFIGURED==='undefined' || !MG_CONFIGURED){
+    app.innerHTML='<div class="card" style="max-width:640px;"><div style="font-weight:700;font-size:16px;">Backend non configurato</div>'+
+    '<div style="font-size:13.5px;line-height:1.6;color:var(--inkSoft);margin-top:8px;">Questa dashboard legge i dati dei pazienti da Supabase. Apri <span class="mono">config.js</span>, incolla <b>SUPABASE_URL</b> e <b>SUPABASE_ANON_KEY</b> del tuo progetto e ricarica. Tutti i passaggi sono in <span class="mono">SETUP.md</span>.</div></div>';
+    return;
+  }
+  if(!sb) sb=window.supabase.createClient(MG_CONFIG.SUPABASE_URL, MG_CONFIG.SUPABASE_ANON_KEY);
+  app.innerHTML='<div class="card">Caricamento dati…</div>';
+  try{
+    const [p,d,s,t,a,b,me,mi]=await Promise.all([
+      sb.from('patients').select('*').order('created_at'),
+      sb.from('vocal_daily').select('*').order('day',{ascending:true}),
+      sb.from('scale_responses').select('*').order('taken_at',{ascending:true}).limit(800),
+      sb.from('test_results').select('*').order('taken_at',{ascending:false}).limit(400),
+      sb.from('alerts').select('*').order('created_at',{ascending:false}).limit(200),
+      sb.from('voice_windows').select('patient_id,started_at').eq('is_baseline',true).order('started_at',{ascending:false}).limit(500),
+      sb.from('medications').select('*').eq('active',true).order('time_of_day',{ascending:true}),
+      sb.from('med_intakes').select('patient_id,medication_id,name,dose,taken_at,taken_on').order('taken_at',{ascending:false}).limit(800),
+    ]);
+    for(const r of [p,d,s,t,a,b,me,mi]) if(r.error) throw r.error;
+    DB.patients=p.data||[]; DB.daily=d.data||[]; DB.scales=s.data||[]; DB.tests=t.data||[]; DB.alerts=a.data||[]; DB.baselines=b.data||[];
+    DB.meds=me.data||[]; DB.intakes=mi.data||[];
+    if(!selId || !DB.patients.some(x=>x.id===selId)) selId=DB.patients[0]?DB.patients[0].id:null;
+    draw();
+  }catch(e){
+    app.innerHTML='<div class="card" style="border-left:4px solid var(--alert);"><b>Errore di lettura:</b> '+esc(e.message||e)+'<div style="font-size:12.5px;color:var(--inkSoft);margin-top:6px;">Verifica di aver eseguito <span class="mono">schema.sql</span> e che le chiavi in config.js siano giuste.</div></div>';
+  }
+}
+const byP=(arr)=>arr.filter(r=>r.patient_id===selId);
+function lastIdxOf(pid){
+  const d=DB.daily.filter(r=>r.patient_id===pid && r.vocal_index!=null);
+  return d.length?d[d.length-1]:null;
+}
+function lastScaleOf(pid){
+  const s=DB.scales.filter(r=>r.patient_id===pid);
+  return s.length?s[s.length-1]:null;
+}
+
+/* ---------- UI ---------- */
+function draw(){
+  const app=document.getElementById('app');
+  if(typeof MG_CONFIG!=='undefined') document.getElementById('brandName').textContent=MG_CONFIG.APP_NAME;
+  if(!DB.patients.length){
+    app.innerHTML='<div class="card" style="max-width:640px;">Nessun paziente ancora registrato: apri l\u2019app paziente, imposta un codice nelle impostazioni e avvia la collana o un check-in.</div>';
+    return;
+  }
+  const list=DB.patients.map(p=>{
+    const li=lastIdxOf(p.id), ls=lastScaleOf(p.id);
+    const alertN=DB.alerts.filter(a=>a.patient_id===p.id && (Date.now()-new Date(a.created_at))<7*864e5).length;
+    const tone=li&&li.vocal_index>=85?'alert':li&&li.vocal_index>=70?'warn':'ok';
+    return '<button class="prow '+(p.id===selId?'sel':'')+'" onclick="selId=\u0027'+p.id+'\u0027;draw()">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'+
+        '<div style="min-width:0;"><div style="font-weight:700;font-size:14px;">'+esc(p.code)+(pName(p)?' · '+esc(pName(p)):'')+'</div>'+
+        '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:2px;">MG-ADL '+(ls?ls.total+'/24 ('+fmtD(ls.taken_at)+')':'—')+'</div></div>'+
+        '<div style="text-align:right;flex-shrink:0;"><span class="badge '+tone+'">indice '+(li?Math.round(li.vocal_index):'—')+'</span>'+
+        (alertN?'<div style="margin-top:4px;"><span class="badge alert">'+alertN+' alert 7g</span></div>':'')+'</div></div></button>';
+  }).join('');
+
+  const p=DB.patients.find(x=>x.id===selId);
+  const daily=byP(DB.daily), scales=byP(DB.scales), tests=byP(DB.tests), alerts=byP(DB.alerts);
+  const meds=byP(DB.meds), intakes=byP(DB.intakes);
+
+  // tiles
+  const li=lastIdxOf(selId);
+  const idx7=avg(daily.slice(-7).map(d=>d.vocal_index).filter(v=>v!=null));
+  const idxPrev7=avg(daily.slice(-14,-7).map(d=>d.vocal_index).filter(v=>v!=null));
+  const delta=(idx7!=null&&idxPrev7!=null)?idx7-idxPrev7:null;
+  const ls=scales[scales.length-1];
+  const last7days=new Set(scales.filter(s=>(Date.now()-new Date(s.taken_at))<7*864e5).map(s=>s.taken_at.slice(0,10)));
+  const min7=daily.slice(-7).reduce((a,d)=>a+(d.tot_s||0),0)/60;
+
+  // serie grafici
+  const idxPts=daily.filter(d=>d.vocal_index!=null).slice(-30).map(d=>({x:fmtD(d.day),y:+(+d.vocal_index).toFixed(1)}));
+  const adlPts=scales.slice(-30).map(s=>({x:fmtD(s.taken_at),y:s.total}));
+  // coppie stesso giorno per la correlazione
+  const dayIdx={}; daily.forEach(d=>{ if(d.vocal_index!=null) dayIdx[d.day]=+d.vocal_index; });
+  const pairs=[]; const seen=new Set();
+  scales.forEach(s=>{ const day=s.taken_at.slice(0,10);
+    if(!seen.has(day) && dayIdx[day]!=null){ seen.add(day); pairs.push({day, adl:s.total, idx:dayIdx[day]}); } });
+
+  const miniP=(key,label,unit,color)=>{
+    const serie=daily.slice(-14).filter(d=>d[key]!=null).map(d=>({x:'',y:+(+d[key]).toFixed(2)}));
+    const last=serie.length?serie[serie.length-1].y:null;
+    return '<div class="card" style="padding:12px;"><div style="display:flex;justify-content:space-between;"><span style="font-size:12px;font-weight:700;">'+label+'</span><span class="mono" style="font-size:12px;color:var(--inkSoft);">'+(last!=null?last+unit:'—')+'</span></div>'+
+      lineChart(serie,{h:72,color:color||C.inkSoft})+'</div>';
+  };
+
+  const testRows=tests.slice(0,8).map(t=>{
+    const m=t.metrics||{};
+    const det=t.test_type==='ptosi'?('calo rima '+(m.decl_pfh_pct??'—')+'% · rima finale '+(m.end_pfh??'—')+' mm'):
+              t.test_type==='conta'?('≈'+(m.count_est??'—')+' · fonazione '+(m.phonation_s??'—')+' s'):
+              ('tenuta '+(m.hold_s??'—')+' s · drift '+(m.max_drift_deg??'—')+'°');
+    return '<tr><td>'+fmtDT(t.taken_at)+'</td><td style="font-weight:600;">'+esc(t.test_type)+'</td><td>'+det+'</td>'+
+      '<td><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'monitorare':'ok')+'</span></td></tr>';
+  }).join('');
+
+  const scaleRows=scales.slice(-8).reverse().map(s=>{
+    const it=s.items||{};
+    return '<tr><td>'+fmtDT(s.taken_at)+'</td><td class="mono" style="font-weight:600;">'+s.total+'/24</td>'+
+      '<td>'+(s.before_meds?'<span class="badge neutral">pre-farmaci</span>':'<span class="badge ok">post</span>')+'</td>'+
+      '<td style="font-size:11px;color:var(--inkSoft);">'+['parola','deglutizione','respirazione','ptosi'].map(k=>k.slice(0,4)+' '+(it[k]??'·')).join(' · ')+'</td>'+
+      '<td>'+esc(s.confidence||'')+'</td></tr>';
+  }).join('');
+
+  const alertHtml=alerts.length?alerts.slice(0,6).map(a=>
+    '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:8px;"><span class="badge '+a.level+'">'+a.level+'</span>'+
+    '<span style="font-size:12.5px;line-height:1.45;"><b>'+esc(a.source)+'</b> — '+esc(a.message)+' <span class="mono" style="font-size:10.5px;color:var(--inkSoft);">'+fmtDT(a.created_at)+'</span></span></div>').join('')
+    :'<div style="font-size:12.5px;color:var(--inkSoft);">nessuna segnalazione</div>';
+
+  // terapia & aderenza (ultimi 7 giorni)
+  const days7=[]; for(let i=0;i<7;i++){ const d=new Date(); d.setDate(d.getDate()-i); days7.push(d.toISOString().slice(0,10)); }
+  const todayStr=days7[0];
+  const medRows=meds.map(md=>{
+    const mine=intakes.filter(x=>x.medication_id===md.id);
+    const daysTaken=new Set(mine.filter(x=>days7.includes(x.taken_on)).map(x=>x.taken_on)).size;
+    const todayTaken=mine.some(x=>x.taken_on===todayStr);
+    const last=mine[0];
+    const adTone=daysTaken>=6?'ok':daysTaken>=4?'warn':'alert';
+    return '<tr><td class="mono">'+String(md.time_of_day||'').slice(0,5)+'</td><td style="font-weight:600;">'+esc(md.name)+'</td><td>'+esc(md.dose||'—')+'</td>'+
+      '<td>'+(todayTaken?'<span class="badge ok">presa</span>':'<span class="badge warn">no</span>')+'</td>'+
+      '<td><span class="badge '+adTone+'">'+daysTaken+'/7</span></td>'+
+      '<td class="mono" style="font-size:10.5px;color:var(--inkSoft);">'+(last?fmtDT(last.taken_at):'—')+'</td></tr>';
+  }).join('');
+  const medSection = meds.length
+    ? '<table><thead><tr><th>ora</th><th>farmaco</th><th>dose</th><th>oggi</th><th>aderenza 7g</th><th>ultima</th></tr></thead><tbody>'+medRows+'</tbody></table>'
+    : '<div style="font-size:12.5px;color:var(--inkSoft);">il paziente non ha ancora registrato una terapia</div>';
+
+  app.innerHTML='<div class="grid">'+
+  '<aside><div class="seclabel" style="margin-top:0;">Pazienti ('+DB.patients.length+')</div><div class="plist">'+list+'</div></aside>'+
+  '<main>'+
+    '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'+
+      '<div><div style="font-weight:700;font-size:18px;">'+esc(p.code)+(pName(p)?' · '+esc(pName(p)):'')+'</div>'+
+      '<div style="font-size:12px;color:var(--inkSoft);margin-top:2px;">check-in '+String(p.checkin_time||'').slice(0,5)+' · test '+String(p.tests_time||'').slice(0,5)+' · fuso '+esc(p.tz)+'</div></div>'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">'+
+      (function(){ const bs=DB.baselines.filter(x=>x.patient_id===selId);
+        return bs.length? '<span class="badge neutral" title="finestre di riferimento fissate dal paziente">⭐ baseline personale · '+fmtD(bs[0].started_at)+'</span>' : '<span class="badge warn" title="il paziente non ha ancora fissato un riferimento">baseline automatico</span>'; })()+
+      '<span class="badge voice">collana: microfono (demo)</span></div></div>'+
+      '<div class="tiles" style="margin-top:14px;">'+
+        '<div class="tile"><div class="v" style="color:'+(li&&li.vocal_index>=70?(li.vocal_index>=85?'var(--alert)':'var(--warn)'):'var(--ink)')+';">'+(li?Math.round(li.vocal_index):'—')+'</div><div class="l">indice vocale ultimo giorno'+(delta!=null?' · Δ7g '+(delta>=0?'+':'')+delta.toFixed(1):'')+'</div></div>'+
+        '<div class="tile"><div class="v">'+(ls?ls.total+'<span style="font-size:13px;color:var(--inkSoft);">/24</span>':'—')+'</div><div class="l">ultima MG-ADL'+(ls?' · '+fmtD(ls.taken_at):'')+'</div></div>'+
+        '<div class="tile"><div class="v">'+last7days.size+'/7</div><div class="l">aderenza check-in · 7 giorni</div></div>'+
+        '<div class="tile"><div class="v">'+Math.round(min7)+'\u2032</div><div class="l">voce analizzata · 7 giorni</div></div>'+
+      '</div></div>'+
+
+    '<div class="seclabel">Correlazione collana ↔ scala clinica</div>'+
+    '<div class="card" style="border-top:4px solid var(--voice);">'+scatterChart(pairs)+'</div>'+
+
+    '<div class="seclabel">Serie temporali · 30 giorni</div>'+
+    '<div class="charts2">'+
+      '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">Indice vocale <span style="font-weight:400;color:var(--inkSoft);">(50 = baseline)</span></div>'+lineChart(idxPts,{baseline:50,color:C.voice,min:40,max:90})+'</div>'+
+      '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">MG-ADL totale</div>'+lineChart(adlPts,{color:C.primary,min:0})+'</div>'+
+    '</div>'+
+
+    '<div class="seclabel">Parametri grezzi · 14 giorni</div>'+
+    '<div class="charts2">'+miniP('hnr','HNR',' dB',C.primary)+miniP('shimmer','Shimmer','%',C.warn)+miniP('jitter','Jitter','%',C.warn)+miniP('pause_ratio','Pause','%',C.inkSoft)+'</div>'+
+
+    '<div class="seclabel">Check-in recenti</div>'+
+    '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>totale</th><th>farmaci</th><th>item chiave</th><th>affidab.</th></tr></thead><tbody>'+(scaleRows||'<tr><td colspan="5" style="color:var(--inkSoft);">nessun check-in</td></tr>')+'</tbody></table></div>'+
+
+    '<div class="seclabel">Test strumentali</div>'+
+    '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>test</th><th>misure</th><th>esito</th></tr></thead><tbody>'+(testRows||'<tr><td colspan="4" style="color:var(--inkSoft);">nessun test</td></tr>')+'</tbody></table></div>'+
+
+    '<div class="seclabel">Terapia &amp; aderenza</div>'+
+    '<div class="card" style="overflow-x:auto;">'+medSection+'</div>'+
+
+    '<div class="seclabel">Segnalazioni</div>'+
+    '<div class="card">'+alertHtml+'</div>'+
+    '<div style="font-size:11px;color:var(--inkSoft);margin-top:14px;line-height:1.55;">Indice vocale sperimentale, non diagnostico: composito di shimmer, jitter, HNR, pause e pendenza d\u2019intensità rispetto al baseline personale del paziente. Il baseline può essere <b>automatico</b> (prime finestre registrate) oppure <b>fissato dal paziente</b> in un momento di benessere (⭐): in tal caso l\u2019indice misura lo scostamento dal "proprio meglio". Demo senza autenticazione: non usare con dati reali.</div>'+
+  '</main></div>';
+}
+loadAll();
+</script>
+</body>
+</html>
