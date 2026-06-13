@@ -3,7 +3,7 @@
    2) Web Push: riceve le notifiche inviate dalla Edge Function `send-reminders`
       e al tocco apre l'app sulla schermata giusta (?checkin=1 / ?tests=1).
    Quando aggiorni i file statici incrementa la versione qui sotto. */
-const CACHE = 'horus-v7';
+const CACHE = 'horus-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,17 @@ const ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  // prompt fissi del check-in pre-renderizzati (generati con tools/gen-prompts.mjs).
+  // allSettled: se un file non c'è ancora, l'install non fallisce.
+  './audio/chk-parola.mp3',
+  './audio/chk-masticazione.mp3',
+  './audio/chk-deglutizione.mp3',
+  './audio/chk-respirazione.mp3',
+  './audio/chk-igiene.mp3',
+  './audio/chk-alzarsi.mp3',
+  './audio/chk-diplopia.mp3',
+  './audio/chk-ptosi.mp3'
 ];
 
 self.addEventListener('install', e => {
