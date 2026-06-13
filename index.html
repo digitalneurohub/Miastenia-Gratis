@@ -229,6 +229,23 @@ function genPatientCode(){
 function fullName(s){ return [s.first_name,s.last_name].filter(x=>x&&x.trim()).join(' ').trim(); }
 function saveSettings(){ SET.name=fullName(SET); try{localStorage.setItem('mg_settings',JSON.stringify(SET));}catch(_){} }
 
+/* sessione di Horus salvata per giornata: thread + "ho già salutato/fatto il giro".
+   All'apertura ripristina la conversazione invece di rifare il saluto da capo
+   (e nessuna chiamata AI all'avvio → niente token sprecati). */
+function horusSessionKey(){ return 'mg_horus_'+todayISO(); }
+function saveHorusSession(){
+  try{ localStorage.setItem(horusSessionKey(), JSON.stringify({ msgs:(chat.msgs||[]).slice(-40), greeted:true, routineDone:!!chat.routine.done })); }catch(_){}
+}
+function loadHorusSession(){
+  try{
+    const key=horusSessionKey();
+    // rimuovi le sessioni dei giorni precedenti (un nuovo giorno → saluto fresco)
+    for(let i=(localStorage.length||0)-1;i>=0;i--){ const k=localStorage.key(i); if(k && k.indexOf('mg_horus_')===0 && k!==key) localStorage.removeItem(k); }
+    const raw=localStorage.getItem(key);
+    return raw?JSON.parse(raw):null;
+  }catch(_){ return null; }
+}
+
 async function ensurePatient(){
   if(!SBOK) return null;
   try{
@@ -734,7 +751,7 @@ function chkClose(){
   currentTab='horus';
   // nudge: dopo il check-in del mattino, se c'è terapia da prendere, Horus lo segnala
   if(chat.opened && wasBeforeMeds && STATE.today.checkin && pendingMorningMeds().length){
-    chat.msgs.push({role:'assistant',text:'Ottimo, check-in fatto! ✓ Ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?'});
+    pushBot('Ottimo, check-in fatto! ✓ Ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?');
   }
   render({top:true});
 }
@@ -745,6 +762,8 @@ function chkClose(){
    salvato in `test_results` (e genera un alert se marcato).
    ============================================================ */
 let testView='menu';   // 'menu' | 'ptosi' | 'conta' | 'armdrift'
+let pendingExtra=null; // risultato di un test già fatto oggi, in attesa di conferma di salvataggio
+let medsEdit=false;    // editor del piano terapeutico (mostrato solo su "Modifica terapia")
 function openTest(t){ testView=t; render({top:true}); }
 function closeTest(){ stopAllTests(); testView='menu'; render({top:true}); }
 function stopAllTests(){
@@ -756,6 +775,16 @@ function pauseCollana(){
   if(lis.phase==='running'){ lisStop(); toast('Collana in pausa: il microfono serve al test'); }
 }
 async function saveTestResult(type, metrics, tone, alertTxt){
+  if(!SBOK || !PID) return false;
+  // se il test di oggi è già stato registrato, questo è un "extra": chiedi conferma
+  if(STATE.today.tests[type]){
+    pendingExtra={type, metrics, tone, alertTxt};
+    render();
+    return false;
+  }
+  return await reallySaveTest(type, metrics, tone, alertTxt);
+}
+async function reallySaveTest(type, metrics, tone, alertTxt){
   if(!SBOK || !PID) return false;
   try{
     await sb.from('test_results').insert({patient_id:PID, test_type:type, metrics});
@@ -769,6 +798,22 @@ async function saveTestResult(type, metrics, tone, alertTxt){
     refreshData();
     return true;
   }catch(e){ console.warn('saveTestResult',e); return false; }
+}
+async function confirmSaveExtra(){
+  const p=pendingExtra; pendingExtra=null;
+  if(p){ const ok=await reallySaveTest(p.type,p.metrics,p.tone,p.alertTxt); toast(ok?'Misura extra salvata ✓':'Salvataggio non riuscito'); }
+  render();
+}
+function discardExtra(){ pendingExtra=null; toast('Misura extra non salvata'); render(); }
+function extraBanner(type){
+  if(!pendingExtra || pendingExtra.type!==type) return '';
+  const L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
+  return '<div class="card" style="margin-top:12px;background:var(--warnSoft);box-shadow:none;padding:13px 15px;">'+
+    '<div style="font-size:13px;color:var(--warn);line-height:1.5;">Hai già registrato il test '+(L[type]||type)+' oggi. Vuoi salvare anche questa misura <b>extra</b>?</div>'+
+    '<div style="display:flex;gap:8px;margin-top:10px;">'+
+      '<button class="btn small primary" onclick="confirmSaveExtra()">Salva</button>'+
+      '<button class="btn small" onclick="discardExtra()">Scarta</button>'+
+    '</div></div>';
 }
 function mediaNote(kind){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
@@ -1646,9 +1691,9 @@ function armCard(){
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="armReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
 }
 function ScreenTest(){
-  if(testView==='ptosi')    return testHead('Test ptosi')+eyeCard();
-  if(testView==='conta')    return testHead('Conta in un respiro')+sbcCard();
-  if(testView==='armdrift') return testHead('Arm drift')+armCard();
+  if(testView==='ptosi')    return testHead('Test ptosi')+extraBanner('ptosi')+eyeCard();
+  if(testView==='conta')    return testHead('Conta in un respiro')+extraBanner('conta')+sbcCard();
+  if(testView==='armdrift') return testHead('Arm drift')+extraBanner('armdrift')+armCard();
   const en=SET.tests_enabled;
   const item=(key,title,sub,emoji)=>{
     const on=!!en[key], done=!!STATE.today.tests[key];
@@ -1661,7 +1706,7 @@ function ScreenTest(){
       '</button>';
   };
   return '<h2 style="font-size:21px;margin-top:10px;">Test del giorno</h2>'+
-  '<div style="font-size:13px;color:var(--inkSoft);margin-top:3px;line-height:1.5;">I test attivi ricevono una notifica alle '+SET.tests_time+'. I risultati finiscono nel diario condiviso con il medico.</div>'+
+  '<div style="font-size:13px;color:var(--inkSoft);margin-top:3px;line-height:1.5;">I test attivi hanno un promemoria alle '+SET.tests_time+', ma puoi eseguirli quando vuoi. I risultati finiscono nel diario condiviso con il medico; se rifai un test già fatto oggi, ti chiedo se salvare la misura extra.</div>'+
   item('ptosi','Ptosi — sguardo in alto','fotocamera · 60 s','👁️')+
   item('conta','Conta in un respiro','microfono · ~30 s','🫁')+
   item('armdrift','Arm drift','sensori di movimento · 30 s','💪');
@@ -1854,12 +1899,13 @@ async function markTherapy(input){
   }
   // ambiguo (più farmaci) o nulla da segnare → apri la pagina per scegliere
   if(pendingMeds().length>1){
-    chat.msgs.push({role:'assistant',text:'Hai più farmaci in elenco: apro la Terapia, tocca quello che hai preso.'});
+    pushBot('Hai più farmaci in elenco: apro la Terapia, tocca quello che hai preso.');
   }
   currentTab='terapia'; render({top:true});
   return false;
 }
 
+function toggleMedsEdit(){ medsEdit=!medsEdit; render({top:true}); }
 function medRow(m){
   const taken=STATE.today.meds&&STATE.today.meds[m.id];
   const t=String(m.time_of_day||'').slice(0,5);
@@ -1889,19 +1935,33 @@ function ScreenTerapia(){
   // sezione "oggi"
   let oggi;
   if(!meds.length){
-    oggi='<div class="card" style="margin-top:12px;"><div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Nessun farmaco nel piano. Aggiungi la tua terapia qui sotto: per ognuno indica nome, dose e orario. Riceverai un promemoria all\u2019orario impostato.</div></div>';
+    oggi='<div class="card" style="margin-top:12px;"><div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Nessun farmaco nel piano. Tocca <b>«Aggiungi terapia»</b> qui sotto: per ognuno indica nome, dose e orario. Riceverai un promemoria all\u2019orario impostato.</div></div>';
   } else {
     oggi=meds.map(medRow).join('');
   }
-  // editor piano
+  // editor piano (mostrato solo in modalità modifica)
   const planList = meds.length? meds.map(m=>
     '<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--bg);">'+
     '<span class="mono" style="font-size:12px;width:46px;flex-shrink:0;color:var(--inkSoft);">'+String(m.time_of_day||'').slice(0,5)+'</span>'+
     '<span style="flex:1;min-width:0;font-size:13.5px;">'+esc(m.name)+(m.dose?' <span style="color:var(--inkSoft);">· '+esc(m.dose)+'</span>':'')+'</span>'+
-    '<button class="btn small" onclick="delMed(\u0027'+m.id+'\u0027)" aria-label="Rimuovi" style="padding:5px 11px;">Rimuovi</button></div>').join('')
-    : '<div style="font-size:12.5px;color:var(--inkSoft);padding:4px 2px;">piano vuoto</div>';
+    (medsEdit?'<button class="btn small" onclick="delMed(\u0027'+m.id+'\u0027)" aria-label="Rimuovi" style="padding:5px 11px;">Rimuovi</button>':'')+'</div>').join('')
+    : '<div style="font-size:12.5px;color:var(--inkSoft);padding:4px 2px;">nessun farmaco nel piano</div>';
 
   const cfgNote=(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)?'':'<div style="font-size:12px;color:var(--warn);margin-top:8px;line-height:1.5;">⚠ Backend non configurato: per salvare la terapia compila <span class="mono">config.js</span> (vedi SETUP.md).</div>';
+
+  const editor = medsEdit
+    ? '<div style="height:12px;"></div>'+
+      '<div style="font-size:12px;font-weight:700;color:var(--inkSoft);margin-bottom:2px;">Aggiungi farmaco</div>'+
+      '<div class="field" style="margin-top:8px;"><label for="medName">Nome</label><input type="text" id="medName" placeholder="es. Piridostigmina (Mestinon)" autocapitalize="words"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 110px;gap:10px;">'+
+        '<div class="field"><label for="medDose">Dose</label><input type="text" id="medDose" placeholder="es. 60 mg"></div>'+
+        '<div class="field"><label for="medTime">Orario</label><input type="time" id="medTime" value="08:00"></div>'+
+      '</div>'+
+      '<div id="medErr" style="font-size:12px;color:var(--alert);min-height:14px;margin:2px;"></div>'+
+      '<button class="btn primary full" onclick="addMedFromForm()">Aggiungi al piano</button>'+
+      cfgNote+
+      '<button class="btn full" style="margin-top:8px;" onclick="toggleMedsEdit()">Fine</button>'
+    : '<button class="btn full" style="margin-top:'+(meds.length?'12px':'4px')+';" onclick="toggleMedsEdit()">'+(meds.length?'Modifica terapia':'Aggiungi terapia')+'</button>';
 
   return '<h2 style="font-size:21px;margin-top:10px;">Terapia</h2>'+
   '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Il tuo piano e le assunzioni di oggi. I promemoria arrivano all\u2019orario di ciascun farmaco.</div>'+
@@ -1909,18 +1969,7 @@ function ScreenTerapia(){
   '<div class="seclabel">Oggi</div>'+
   oggi+
   '<div class="seclabel">Piano terapeutico</div>'+
-  '<div class="card">'+planList+
-    '<div style="height:10px;"></div>'+
-    '<div style="font-size:12px;font-weight:700;color:var(--inkSoft);margin-bottom:2px;">Aggiungi farmaco</div>'+
-    '<div class="field" style="margin-top:8px;"><label for="medName">Nome</label><input type="text" id="medName" placeholder="es. Piridostigmina (Mestinon)" autocapitalize="words"></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 110px;gap:10px;">'+
-      '<div class="field"><label for="medDose">Dose</label><input type="text" id="medDose" placeholder="es. 60 mg"></div>'+
-      '<div class="field"><label for="medTime">Orario</label><input type="time" id="medTime" value="08:00"></div>'+
-    '</div>'+
-    '<div id="medErr" style="font-size:12px;color:var(--alert);min-height:14px;margin:2px;"></div>'+
-    '<button class="btn primary full" onclick="addMedFromForm()">Aggiungi al piano</button>'+
-    cfgNote+
-  '</div>'+
+  '<div class="card">'+planList+editor+'</div>'+
   '<div class="card" style="margin-top:12px;background:var(--voiceSoft);box-shadow:none;padding:12px 15px;"><div style="font-size:12px;color:#14474E;line-height:1.55;">Horus non dà indicazioni cliniche sui farmaci (dosi, sospensioni, cambi): si limita a ricordarteli e a registrare ciò che hai concordato col tuo medico.</div></div>';
 }
 
@@ -1929,7 +1978,8 @@ function ScreenTerapia(){
    Dialoga in italiano, ricorda le attività del giorno e avvia le
    funzioni dell'app eseguendo le "azioni" decise dall'Edge Function.
    ============================================================ */
-const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null };
+const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null,
+  routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false} };
 
 function horusAvatarSVG(){
   // occhio di Horus stilizzato
@@ -1992,6 +2042,7 @@ function actionLabel(name,tipo){
 async function chatSend(text,opts){
   opts=opts||{};
   if(chat.busy) return;
+  if(chat.routine && chat.routine.active){ routineStopListen(); chat.routine.active=false; }  // testo libero → esci dalla routine
   if(text){ chat.msgs.push({role:'user',text:text}); }
   chat.busy=true; chat.error=null; render();
   // se non c'è backend, Horus funziona comunque in modalità locale
@@ -2005,7 +2056,7 @@ async function chatSend(text,opts){
     const d=await r.json().catch(()=>({}));
     chat.busy=false;
     if(!r.ok || d.error){ chat.error=d.error||('Errore '+r.status); localHorusReply(text,opts); render({bottom:true}); return; }
-    if(d.reply) chat.msgs.push({role:'assistant',text:d.reply, action:d.action||null});
+    if(d.reply){ chat.msgs.push({role:'assistant',text:d.reply, action:d.action||null}); say(d.reply); }
     render({bottom:true});
     if(d.action){ setTimeout(()=>dispatchHorus(d.action),520); }   // lascia leggere la frase prima di navigare
   }catch(e){
@@ -2030,10 +2081,10 @@ function localHorusReply(text,opts){
     } else {
       body=' Per oggi sei in pari, complimenti. Se vuoi possiamo registrare un po\u2019 di voce o vedere l\u2019andamento.';
     }
-    chat.msgs.push({role:'assistant',text:hi+body});
+    chat.msgs.push({role:'assistant',text:hi+body}); say(hi+body);
     return;
   }
-  chat.msgs.push({role:'assistant',text:'Posso avviare per te la collana, il check-in MG-ADL, i test, la terapia o l\u2019andamento: scegli un pulsante qui sotto.'+(!SBOK?' (Sto funzionando in locale: collega Supabase per il dialogo completo.)':'')});
+  { const t='Posso avviare per te la collana, il check-in MG-ADL, i test, la terapia o l\u2019andamento: scegli un pulsante qui sotto.'+(!SBOK?' (Sto funzionando in locale: collega Supabase per il dialogo completo.)':''); chat.msgs.push({role:'assistant',text:t}); say(t); }
 }
 
 /* dettatura per la chat */
@@ -2073,9 +2124,141 @@ function chip(name,tipo){
   else if(name==='apri_andamento'){ userText='Mostrami l\u2019andamento'; botText='Ecco l\u2019andamento.'; }
   else { userText='Avvia '+label; botText='Va bene, apro '+label+'.'; }
   chat.msgs.push({role:'user',text:userText});
-  chat.msgs.push({role:'assistant',text:botText});
+  pushBot(botText);
   render({bottom:true});
   setTimeout(()=>dispatchHorus({name:name,input:tipo?{tipo:tipo}:{}}),360);
+}
+
+/* ============================================================
+   AVVIO GUIDATO — routine vocale DETERMINISTICA (niente modello)
+   All'apertura Horus legge a voce le domande del mattino (check-in,
+   test, terapia) e ascolta un "sì/no". Se la risposta non è
+   classificabile, passa la parola alla chat AI.
+   ============================================================ */
+function pushBot(t,opts){ opts=opts||{}; chat.msgs.push({role:'assistant',text:t}); if(!opts.silent) say(t,opts.onend); }
+function pushUser(t){ chat.msgs.push({role:'user',text:t}); }
+
+/* lettura vocale dei messaggi generati (attiva salvo "muta" = SET.tts false).
+   NON annulla la voce in corso: i messaggi si accodano in ordine. */
+function say(text,onend){
+  if(SET.tts && ('speechSynthesis' in window)){
+    try{
+      const u=new SpeechSynthesisUtterance(text); u.lang='it-IT'; u.rate=1;
+      if(onend) u.onend=()=>{ try{onend();}catch(_){ } };
+      speechSynthesis.speak(u);
+      return;
+    }catch(_){}
+  }
+  if(onend) setTimeout(onend,60);
+}
+function toggleHorusMute(){
+  SET.tts=!SET.tts; saveSettings();
+  if(!SET.tts){ try{ speechSynthesis.cancel(); }catch(_){ } }
+  toast(SET.tts?'Voce attiva':'Voce disattivata');
+  render();
+}
+
+function routineSteps(){
+  const s=[];
+  if(!STATE.today.checkin) s.push('checkin');
+  const en=SET.tests_enabled||{};
+  if(['ptosi','conta','armdrift'].some(k=>en[k] && !STATE.today.tests[k])) s.push('tests');
+  if(pendingMorningMeds().length) s.push('therapy');
+  return s;
+}
+function routinePrompt(step){
+  if(step==='checkin') return 'Vuoi fare il check-in di oggi adesso? Rispondi sì o no.';
+  if(step==='tests'){
+    const en=SET.tests_enabled||{}, L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
+    const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]).map(k=>L[k]);
+    return 'Vuoi eseguire ora '+(p.length>1?'i test ('+p.join(', ')+')':'il test della '+p[0])+'? Sì o no.';
+  }
+  if(step==='therapy') return 'Hai già preso la terapia di stamattina? Sì o no.';
+  return '';
+}
+function startRoutine(){
+  const nm=SET.first_name?' '+SET.first_name:'';
+  chat.routine.steps=routineSteps(); chat.routine.step=0; chat.routine.armed=false;
+  if(!chat.routine.steps.length){
+    chat.routine.active=false; chat.routine.done=true;
+    pushBot('Ciao'+nm+'! Per oggi sei in pari. Se ti serve qualcosa — vedere l\u2019andamento, registrare la voce o altro — chiedimi pure a voce o per iscritto.');
+    render({bottom:true}); return;
+  }
+  chat.routine.active=true; chat.routine.done=false;
+  pushBot('Ciao'+nm+'! Sono Horus, facciamo un rapido punto della mattina.');
+  routineAsk();
+}
+function routineAsk(){
+  const q=routinePrompt(chat.routine.steps[chat.routine.step]);
+  pushBot(q, {onend: ()=>{ if(chat.routine.active && chat.routine.armed && !chat.routine.listening) routineListen(); }});
+  render({bottom:true});
+}
+function routineStopListen(){ try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; }
+function routineListen(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ chat.routine.armed=false; toast('Riconoscimento vocale non disponibile: usa i pulsanti'); render(); return; }
+  if(chat.routine.listening) return;
+  try{ speechSynthesis&&speechSynthesis.cancel(); }catch(_){}
+  const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
+  let txt='';
+  rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
+  rec.onerror=e=>{ chat.routine.listening=false; if(e.error==='not-allowed'||e.error==='service-not-allowed') chat.routine.armed=false; render(); };
+  rec.onend=()=>{ chat.routine.listening=false; render(); const t=txt.trim(); if(t) routineHeard(t); };
+  chat.routine.rec=rec; chat.routine.listening=true; chat.routine.armed=true; render();
+  try{ rec.start(); }catch(_){ chat.routine.listening=false; chat.routine.armed=false; render(); }
+}
+function routineYesNo(t){
+  const s=' '+t.toLowerCase().replace(/[\u2019\u0027]/g,' ').replace(/[.,!?;:]/g,' ').replace(/\s+/g,' ')+' ';
+  const yes=[' si ',' sì ',' certo ',' certamente ',' va bene ',' ok ',' okay ',' volentieri ',' yes ',' esatto ',' assolutamente ',' sicuro ',' fatto ',' fatta ',' presa ',' preso ',' presi '];
+  const no=[' no ',' nope ',' non ancora ',' più tardi ',' piu tardi ',' dopo ',' non adesso ',' non ora ',' magari dopo ',' negativo ',' non l ho ',' non lo ho ',' non ho ancora '];
+  const y=yes.some(w=>s.includes(w)), n=no.some(w=>s.includes(w));
+  if(y&&!n) return 'yes';
+  if(n&&!y) return 'no';
+  return null;
+}
+function routineHeard(t){
+  const v=routineYesNo(t);
+  if(v){ pushUser(t); routineAnswer(v); }
+  else { chat.routine.active=false; render(); chatSend(t); }   // non capito → AI
+}
+async function markMorningMedsTaken(){
+  if(!SBOK||!PID) return;
+  const pend=pendingMorningMeds(); if(!pend.length) return;
+  try{
+    const rows=pend.map(m=>({patient_id:PID, medication_id:m.id, name:m.name, dose:m.dose||null,
+      taken_at:new Date().toISOString(), taken_on:todayISO(), source:'app'}));
+    await sb.from('med_intakes').insert(rows); await refreshData();
+  }catch(e){ console.warn('markMorningMeds',e); }
+}
+function routineOpenTests(){
+  const en=SET.tests_enabled||{};
+  const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]);
+  if(p.length===1) dispatchHorus({name:'avvia_test', input:{tipo:p[0]}});
+  else { testView='menu'; currentTab='test'; render({top:true}); }
+}
+function routineAnswer(value){
+  routineStopListen();
+  const step=chat.routine.steps[chat.routine.step];
+  if(step==='checkin'){
+    if(value==='yes'){ pushBot('Perfetto, apro il check-in.'); chat.routine.active=false; say('Apro il check-in.'); dispatchHorus({name:'avvia_checkin'}); return; }
+    pushBot('Va bene, lo farai più tardi.');
+  } else if(step==='tests'){
+    if(value==='yes'){ pushBot('Apro i test.'); chat.routine.active=false; say('Apro i test.'); routineOpenTests(); return; }
+    pushBot('Va bene, magari più tardi.');
+  } else if(step==='therapy'){
+    if(value==='yes'){ markMorningMedsTaken(); pushBot('Ottimo, ho segnato la terapia come presa. ✓'); }
+    else { pushBot('Va bene. Ora che hai fatto le misure puoi prenderla: quando l\u2019hai presa dimmelo e la segno.'); }
+  }
+  routineNext();
+}
+function routineNext(){
+  chat.routine.step++;
+  if(chat.routine.step>=chat.routine.steps.length){
+    chat.routine.active=false; chat.routine.done=true;
+    pushBot('Tutto qui per ora. Per qualsiasi altra cosa — andamento, voce, domande — chiedimi pure a voce o scrivendo.');
+    render({bottom:true}); return;
+  }
+  routineAsk();
 }
 
 function ScreenHorus(){
@@ -2116,13 +2299,28 @@ function ScreenHorus(){
   chips+='<button class="chip" onclick="chip(\u0027apri_andamento\u0027)">📈 Andamento</button>';
   if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>'+chips;
 
+  // avvio guidato: se la routine vocale è attiva, mostra microfono + Sì/No al posto dei chip
+  if(chat.routine && chat.routine.active){
+    const lisn=chat.routine.listening;
+    chips =
+      '<button class="chip primary" onclick="'+(lisn?'routineStopListen()':'routineListen()')+'">'+
+        (lisn?'🔴 Sto ascoltando… tocca per fermare':'🎤 Rispondi a voce')+'</button>'+
+      '<button class="chip" onclick="routineAnswer(\u0027yes\u0027)">Sì</button>'+
+      '<button class="chip" onclick="routineAnswer(\u0027no\u0027)">No</button>';
+  }
+
   const micEnabled=sttSupported();
   return '<div class="horuswrap">'+
     '<div class="horushead">'+
       '<div class="horusav'+(chat.busy?' think':'')+'" id="horusAv">'+horusAvatarSVG()+'</div>'+
       '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:17px;">Horus</div>'+
       '<div style="font-size:11.5px;color:var(--inkSoft);">assistente per il monitoraggio · sperimentale</div></div>'+
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+idxPill+progPill+'</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">'+
+        '<button onclick="toggleHorusMute()" aria-label="'+(SET.tts?'Disattiva voce':'Attiva voce')+'" title="'+(SET.tts?'Voce attiva (tocca per mutare)':'Voce disattivata (tocca per attivare)')+'" style="all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:'+(SET.tts?'var(--voice)':'var(--inkSoft)')+';background:var(--card);">'+
+          (SET.tts
+            ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+            : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="m16 9 5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')+
+        '</button>'+idxPill+progPill+'</div>'+
     '</div>'+
     '<div class="chatscroll" id="chatScroll">'+
       (thread||'')+
@@ -2184,6 +2382,8 @@ const TABS=[
 let currentTab='horus';
 function setTab(id){
   if(currentTab==='test' && id!=='test') stopAllTests();
+  if(id!=='terapia') medsEdit=false;       // la terapia si riapre in sola lettura
+  if(id!=='test') pendingExtra=null;        // annulla una conferma extra in sospeso
   if(currentTab==='ascolto' && id!=='ascolto' && lis.phase==='running'){
     if(lis.baselineMode){ freeMic(); lis.phase='idle'; lis.baselineMode=false; toast('Registrazione del baseline interrotta'); }
     else lisStop();
@@ -2204,6 +2404,7 @@ function render(opts){
   document.getElementById('nav').innerHTML=TABS.map(t=>
     '<button class="'+(t.id===currentTab?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
     '<span class="ic">'+t.icon+'</span>'+t.label+'</button>').join('');
+  if(chat.opened){ saveHorusSession(); }   // persistenza del thread (per non rifare il saluto a ogni apertura)
 }
 function envCheck(){
   const probs=[];
@@ -2222,7 +2423,15 @@ let horusOpened=false;
 async function openHorus(){
   if(horusOpened) return; horusOpened=true;
   chat.opened=true;
-  await chatSend(null,{opening:true});
+  const s=loadHorusSession();
+  if(s && Array.isArray(s.msgs) && s.msgs.length){
+    // già salutato/avviato oggi: ripristina la conversazione, niente saluto da capo né AI
+    chat.msgs=s.msgs;
+    chat.routine.done=!!s.routineDone; chat.routine.active=false;
+    render({bottom:true});
+    return;
+  }
+  startRoutine();   // primo accesso di oggi: avvio guidato deterministico (vocale)
 }
 async function init(){
   if(typeof MG_CONFIG!=='undefined') {
