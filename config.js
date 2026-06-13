@@ -8,11 +8,11 @@ const MG_CONFIG = {
   APP_NAME: 'Horus',
 
   // --- Supabase (Dashboard → Project Settings → API) ---
-  SUPABASE_URL: 'https://TUO-PROGETTO.supabase.co',
-  SUPABASE_ANON_KEY: 'INCOLLA-QUI-LA-ANON-KEY',
+  SUPABASE_URL: 'https://nlovdhxymuvnxnveampb.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_wiMyt2rTURQFrdEAX0gtKQ_0VR8hi0A',
 
   // --- Web Push (genera con: npx web-push generate-vapid-keys) ---
-  VAPID_PUBLIC_KEY: 'INCOLLA-QUI-LA-VAPID-PUBLIC-KEY',
+  VAPID_PUBLIC_KEY: 'BMK9Ee4QEuL5JoJWmu-3z9TMB3Z22s8iinzH7DoNtoYMwKDNw5IJadTxDrS-BHSBuxDnvEAUt3LRG0DhjBK3KIw',
 
   // --- Parametri demo ---
   DEFAULT_PATIENT_CODE: 'MG-001', // prefisso del codice paziente generato al primo avvio
