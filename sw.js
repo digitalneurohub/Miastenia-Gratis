@@ -3,7 +3,7 @@
    2) Web Push: riceve le notifiche inviate dalla Edge Function `send-reminders`
       e al tocco apre l'app sulla schermata giusta (?checkin=1 / ?tests=1).
    Quando aggiorni i file statici incrementa la versione qui sotto. */
-const CACHE = 'horus-v2';
+const CACHE = 'horus-v3';
 const ASSETS = [
   './',
   './index.html',
