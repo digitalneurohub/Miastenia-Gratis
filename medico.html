@@ -87,13 +87,13 @@ function lineChart(pts,opt){
   // pts: [{x:label, y:number}] in ordine cronologico
   opt=opt||{};
   const w=opt.w||460,h=opt.h||150,padL=34,padB=20,padT=8,padR=8;
-  if(!pts || pts.length<2) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">dati insufficienti</div>';
+  if(!pts || pts.length<1) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">dati insufficienti</div>';
   const ys=pts.map(p=>p.y).concat(opt.baseline!=null?[opt.baseline]:[]);
   let mn=Math.min(...ys), mx=Math.max(...ys);
   if(opt.min!=null) mn=Math.min(mn,opt.min);
   if(opt.max!=null) mx=Math.max(mx,opt.max);
   if(mx-mn<1e-6){ mx+=1; mn-=1; }
-  const X=i=>padL+(i/(pts.length-1))*(w-padL-padR);
+  const X=i=> pts.length<2 ? (padL+(w-padL-padR)/2) : padL+(i/(pts.length-1))*(w-padL-padR);
   const Y=v=>padT+(1-(v-mn)/(mx-mn))*(h-padT-padB);
   const path=pts.map((p,i)=>(i?'L':'M')+X(i).toFixed(1)+','+Y(p.y).toFixed(1)).join(' ');
   const grid=[mn,(mn+mx)/2,mx].map(v=>
@@ -117,7 +117,7 @@ function pearson(xs,ys){
 function scatterChart(pairs){
   // pairs: [{adl, idx, day}]
   const w=460,h=210,padL=40,padB=30,padT=10,padR=12;
-  if(!pairs || pairs.length<3) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Servono almeno 3 giornate con check-in <b>e</b> ascolto della collana nello stesso giorno.</div>';
+  if(!pairs || pairs.length<1) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Serve almeno una giornata con check-in <b>e</b> ascolto della collana nello stesso giorno.</div>';
   const xs=pairs.map(p=>p.adl), ys=pairs.map(p=>p.idx);
   const mnX=0, mxX=Math.max(10,Math.max(...xs)+1);
   const mnY=Math.min(40,Math.min(...ys)-3), mxY=Math.max(60,Math.max(...ys)+3);
