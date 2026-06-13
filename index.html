@@ -121,14 +121,15 @@
   .chip{all:unset;cursor:pointer;font-size:13px;font-weight:600;border-radius:999px;padding:8px 14px;background:var(--card);border:1.5px solid var(--line);color:#1B4D33;display:inline-flex;align-items:center;gap:7px;}
   .chip.primary{background:var(--voice);border-color:var(--voice);color:#fff;}
   .chip.done{opacity:.5;}
-  .composer{display:flex;flex-direction:column;gap:10px;padding:8px 1px calc(6px + env(safe-area-inset-bottom));}
+  .screen:has(.horuswrap){padding-bottom:0;}   /* in chat il composer va attaccato alla bottom bar */
+  .composer{display:flex;flex-direction:column;gap:10px;padding:8px 1px 4px;}
   .composer textarea{width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:20px;padding:10px 14px;background:var(--card);max-height:120px;min-height:46px;resize:none;font-family:inherit;font-size:14.5px;line-height:1.4;}
-  .composer .composerRow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;}
+  .composer .composerRow{display:grid;grid-template-columns:1fr auto 1fr;column-gap:14px;align-items:center;}
   .composer .cbtn{border-radius:999px;border:none;display:grid;place-items:center;flex-shrink:0;color:#fff;}
-  .composer .cbtn.clear{grid-column:1;justify-self:start;width:46px;height:46px;background:var(--line);color:var(--inkSoft);}   /* ✕ a sinistra, leggermente più piccola */
+  .composer .cbtn.clear{grid-column:1;justify-self:end;width:46px;height:46px;background:var(--line);color:var(--inkSoft);}   /* ✕ a sinistra, accanto al microfono */
   .composer .cbtn.mic{grid-column:2;justify-self:center;width:64px;height:64px;background:var(--voice);box-shadow:0 8px 22px rgba(31,110,120,.32);}   /* microfono grande, al centro */
   .composer .cbtn.mic.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;box-shadow:0 8px 22px rgba(179,55,46,.35);}   /* in registrazione → pausa */
-  .composer .cbtn.send{grid-column:3;justify-self:end;width:46px;height:46px;background:var(--primary);}   /* freccia di invio a destra */
+  .composer .cbtn.send{grid-column:3;justify-self:start;width:46px;height:46px;background:var(--primary);}   /* freccia di invio a destra, accanto al microfono */
   .composer .cbtn.send:disabled{background:var(--line);}
   .composer .micph{grid-column:2;justify-self:center;width:64px;height:64px;}
   .liveoverlay{position:absolute;inset:0;z-index:40;background:rgba(238,243,238,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
