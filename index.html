@@ -127,6 +127,7 @@
   .composer .cbtn.mic{background:var(--voice);} .composer .cbtn.mic.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
   .composer .cbtn.send{background:var(--primary);} .composer .cbtn.send:disabled{background:var(--line);}
   .composer .cbtn.mic{width:56px;height:56px;}   /* pulsante per registrare, più grande */
+  .composer .cbtn.clear{width:40px;height:40px;background:var(--line);color:var(--inkSoft);}
   .liveoverlay{position:absolute;inset:0;z-index:40;background:rgba(238,243,238,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
   .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.35);animation:mgPulse 1.3s ease-in-out infinite;}
   .liveoverlay .livewords{font-size:27px;line-height:1.32;font-weight:600;color:var(--ink);max-height:42vh;overflow-y:auto;min-height:42px;width:100%;}
@@ -167,7 +168,7 @@
   <div style="display:flex;gap:8px;align-items:center;">
     <span class="lisdot" id="lisDot" title="Stato collana"></span>
     <button class="iconbtn" onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
     </button>
   </div>
 </header>
@@ -1134,8 +1135,7 @@ function scrollScreenToCard(id){
 async function eyeStart(){
   Object.assign(eyeTest,{phase:'running',source:null,frames:[],gotFrames:0,saved:false,
     t0:performance.now(),lastVideoTime:-1,modelReady:false,status:'caricamento modello…'});
-  render();
-  scrollScreenToCard('eyeLive');
+  render({top:true});   // box bianco in cima sotto la top bar (titolo/Salva-Scarta nascosti durante il test)
   try{
     if(!navigator.mediaDevices?.getUserMedia) throw new Error('no-media');
     eyeTest.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
@@ -1761,7 +1761,7 @@ function eyeCard(){
           +'<div style="font-size:11px;color:var(--inkSoft);line-height:1.4;"><span style="color:#39E0A8;">●</span> occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso</div>'
           +'<button id="eyeOverlayBtn" class="btn small" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">Nascondi punti</button>'
         +'</div>';
-    return '<div class="card" id="eyeLive" style="margin-top:14px;padding:18px;">'+
+    return '<div class="card" id="eyeLive" style="margin-top:8px;padding:18px;">'+
       '<div style="text-align:center;margin-bottom:8px;"><span aria-hidden="true" style="display:inline-block;width:16px;height:16px;border-radius:999px;background:var(--primary);animation:mgPulse 1.6s ease-in-out infinite;"></span>'+
       '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;">tieni lo sguardo su questo punto, in alto</div></div>'+
       '<div class="row-flex"><span class="badge alert">● registrazione</span><span class="mono" id="eyeTime" style="font-weight:600;">0s / '+eyeTest.duration+'s</span></div>'+
@@ -1868,7 +1868,7 @@ function armCard(){
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="armReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
 }
 function ScreenTest(){
-  if(testView==='ptosi')    return testHead('Test ptosi')+extraBanner('ptosi')+eyeCard();
+  if(testView==='ptosi')    return (eyeTest.phase==='running'?'':testHead('Test ptosi')+extraBanner('ptosi'))+eyeCard();
   if(testView==='conta')    return testHead('Conta in un respiro')+extraBanner('conta')+sbcCard();
   if(testView==='armdrift') return testHead('Arm drift')+extraBanner('armdrift')+armCard();
   const en=SET.tests_enabled;
@@ -2229,7 +2229,7 @@ async function chatSend(text,opts){
   if(chat.busy) return;
   if(chat.routine && chat.routine.active){ routineStopListen(); chat.routine.active=false; }  // testo libero → esci dalla routine
   if(text){ chat.msgs.push({role:'user',text:text}); }
-  chat.busy=true; chat.error=null; render();
+  chat.busy=true; chat.error=null; render({bottom:true});
   // se non c'è backend, Horus funziona comunque in modalità locale
   if(!SBOK){ chat.busy=false; localHorusReply(text,opts); render({bottom:true}); return; }
   try{
@@ -2284,13 +2284,13 @@ function chatMic(){
   rec.onresult=e=>{ let interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; if(e.results[i].isFinal) finalTxt+=t; else interim+=t; }
     const txt=(finalTxt+interim).trim(); chat.live=txt;
-    const big=document.getElementById('chatLiveBig'); if(big && txt) big.textContent=txt;      // parole live, grandi
-    const ta=document.getElementById('chatInput'); if(ta){ ta.value=txt; autoGrow(ta); }
+    const big=document.getElementById('chatLiveBig'); if(big && txt){ big.textContent=txt; big.scrollTop=big.scrollHeight; }      // parole live, grandi, sempre in vista
+    const ta=document.getElementById('chatInput'); if(ta){ ta.value=txt; autoGrow(ta); chatClearSync(); }
   };
   rec.onend=()=>{ chat.listening=false;
     if(chat.discard){ chat.discard=false; chat.live=''; render(); const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t);} return; }
     render();
-    const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=((ta2.value&&ta2.value.trim())||chat.live||finalTxt).trim(); autoGrow(ta2);} };
+    const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=((ta2.value&&ta2.value.trim())||chat.live||finalTxt).trim(); autoGrow(ta2); chatClearSync();} };
   rec.onerror=e=>{ chat.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
   chat.rec=rec; chat.listening=true; render();
   try{ rec.start(); }catch(_){ chat.listening=false; render(); }
@@ -2303,6 +2303,8 @@ function chatMicCancel(){
   else render();
 }
 function autoGrow(ta){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
+function chatClearSync(){ const b=document.getElementById('chatClearBtn'), ta=document.getElementById('chatInput'); if(b&&ta) b.style.display=(ta.value&&ta.value.trim())?'grid':'none'; }
+function chatClear(){ const ta=document.getElementById('chatInput'); if(ta){ ta.value=''; autoGrow(ta); ta.focus(); } chat.live=''; chatClearSync(); }
 function chatSubmitFromInput(){
   const ta=document.getElementById('chatInput'); if(!ta) return;
   const v=ta.value.trim(); if(!v) return;
@@ -2530,7 +2532,8 @@ function ScreenHorus(){
       '</div>'
     :'')+
     '<div class="composer">'+
-      '<textarea id="chatInput" rows="1" placeholder="Scrivi a Horus…" oninput="autoGrow(this)" onkeydown="chatKey(event)"></textarea>'+
+      '<textarea id="chatInput" rows="1" placeholder="Scrivi a Horus…" oninput="autoGrow(this);chatClearSync()" onkeydown="chatKey(event)"></textarea>'+
+      '<button class="cbtn clear" id="chatClearBtn" onclick="chatClear()" aria-label="Cancella il testo" title="Cancella" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>'+
       (micEnabled?'<button class="cbtn mic'+(chat.listening?' live':'')+'" onclick="chatMic()" aria-label="Parla">'+
         (chat.listening?'<svg width="18" height="18" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="#fff"/></svg>':'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>')+'</button>':'')+
       '<button class="cbtn send" onclick="chatSubmitFromInput()" aria-label="Invia"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 12h14M12 5l7 7-7 7" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'+
@@ -2625,12 +2628,16 @@ function render(opts){
   opts=opts||{};
   const scr=document.getElementById('screen');
   const keep=opts.top?0:scr.scrollTop;
+  // preserva la posizione di scroll della chat di Horus tra i re-render (es. tasto muta)
+  let csPrev=0, csBottom=true;
+  if(currentTab==='horus'){ const cs0=document.getElementById('chatScroll'); if(cs0){ csPrev=cs0.scrollTop; csBottom=(cs0.scrollHeight-cs0.scrollTop-cs0.clientHeight)<40; } }
   const tab=TABS.find(t=>t.id===currentTab)||TABS[0];
   scr.innerHTML=tab.fn();
   scr.scrollTop=keep;
-  // la chat di Horus cresce verso il basso: portala in fondo quando serve
-  if(currentTab==='horus' && (opts.bottom||opts.top)){
-    const cs=document.getElementById('chatScroll'); if(cs) cs.scrollTop=cs.scrollHeight;
+  // la chat di Horus cresce verso il basso: resta in fondo se eri in fondo, altrimenti mantiene la posizione
+  if(currentTab==='horus'){
+    const cs=document.getElementById('chatScroll');
+    if(cs) cs.scrollTop=(opts.bottom||opts.top||csBottom)?cs.scrollHeight:csPrev;
   }
   document.getElementById('nav').innerHTML=TABS.map(t=>
     '<button class="'+(t.id===currentTab?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
@@ -2654,15 +2661,11 @@ let horusOpened=false;
 async function openHorus(){
   if(horusOpened) return; horusOpened=true;
   chat.opened=true;
-  const s=loadHorusSession();
-  if(s && Array.isArray(s.msgs) && s.msgs.length){
-    // già salutato/avviato oggi: ripristina la conversazione, niente saluto da capo né AI
-    chat.msgs=s.msgs;
-    chat.routine.done=!!s.routineDone; chat.routine.active=false;
-    render({bottom:true});
-    return;
-  }
-  startRoutine();   // primo accesso di oggi: avvio guidato deterministico (vocale)
+  // a ogni apertura dell'app: saluta di nuovo e parla SOLO dei pendenti (voce + testo),
+  // senza ripristinare l'intera conversazione precedente.
+  chat.msgs=[];
+  chat.routine.active=false; chat.routine.done=false;
+  startRoutine();
 }
 async function init(){
   if(typeof MG_CONFIG!=='undefined') {
