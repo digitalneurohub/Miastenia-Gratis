@@ -199,7 +199,7 @@ function initSupabase(){
 /* impostazioni locali (specchiate sulla riga `patients`) */
 const DEF_SET={first_name:'', last_name:'', name:'', onboarded:false,
   code:'', checkin_time:'07:30', tests_time:'18:00', meds_time:'08:00',
-  tests_enabled:{ptosi:false,conta:false,armdrift:false},
+  tests_enabled:{ptosi:true,conta:true,armdrift:true},
   tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT};
 let SET=loadSettings();
 function loadSettings(){
@@ -273,11 +273,11 @@ function fmtTime(d){ return new Date(d).toLocaleTimeString('it-IT',{hour:'2-digi
 
 /* sparkline SVG (dalla app MG-Sense) */
 function spark(data,baseline,color,h=44,w=280){
-  if(!data || data.length<2) return '<div style="font-size:12px;color:var(--inkSoft);">dati insufficienti</div>';
+  if(!data || data.length<1) return '<div style="font-size:12px;color:var(--inkSoft);">dati insufficienti</div>';
   const all=baseline!=null?data.concat([baseline]):data;
-  const min=Math.min(...all)-4, max=Math.max(...all)+4;
-  const x=i=>(i/(data.length-1))*(w-6)+3;
-  const y=v=>h-5-((v-min)/(max-min))*(h-10);
+  const min=Math.min(...all)-4, max=Math.max(...all)+4; const den=(max-min)||1;
+  const x=i=> data.length<2 ? (w/2) : (i/(data.length-1))*(w-6)+3;
+  const y=v=>h-5-((v-min)/den)*(h-10);
   const path=data.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ');
   const base=baseline!=null?'<line x1="3" x2="'+(w-3)+'" y1="'+y(baseline).toFixed(1)+'" y2="'+y(baseline).toFixed(1)+'" stroke="'+C.inkSoft+'" stroke-dasharray="4 4" stroke-width="1.2"/>':'';
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block" aria-hidden="true">'+base+
@@ -436,7 +436,7 @@ function computeWindowMetrics(F, spanS){
 /* stato dell'ascolto */
 const lis={phase:'idle', stream:null, actx:null, analyser:null, fbuf:null, sr:44100,
   raf:null, frames:[], level:0, smooth:[0,0,0], lastFrameAt:0, t0:0, winT0:0,
-  winSent:0, winSilent:0, secToday:0, baseline:null, wake:null,
+  winSent:0, winSilent:0, secToday:0, baseline:null, sessWins:[], wake:null,
   baselineMode:false, baseWin:0, baseTarget:90, baseVoiced:0};
 
 async function loadBaseline(){
@@ -464,8 +464,8 @@ async function loadBaseline(){
       .select('hnr_mean,shimmer_pct,jitter_pct,pause_ratio,intensity_slope')
       .eq('patient_id',PID).eq('is_baseline',false)
       .order('started_at',{ascending:true}).limit(200);
-    if(!data || data.length<10) return null;
-    return build(data.slice(0, Math.min(30, Math.max(10, Math.floor(data.length/2)))), false);
+    if(!data || data.length<3) return null;
+    return build(data.slice(0, Math.min(30, Math.max(3, Math.floor(data.length/2)))), false);
   }catch(_){ return null; }
 }
 /* indice vocale 0–100: 50 = baseline personale; pesi dichiarati e trasparenti */
@@ -477,11 +477,22 @@ function vocalIndex(m,B){
             + 0.10*(-z(m.intSlope,B.slope));
   return Math.round(Math.max(0,Math.min(100, 50+10*risk))*10)/10;
 }
+/* riferimento ricavato dalle finestre della sessione in corso: permette di
+   mostrare un indice fin dalla prima registrazione (demo), finché non esiste
+   un baseline persistito (manuale o automatico). La prima finestra dà ~50. */
+function buildSessBaseline(wins){
+  if(!wins || !wins.length) return null;
+  const stat=arr=>{ const a=arr.filter(v=>v!=null); return {m:vAvg(a), s:Math.max(vSd(a),1e-6)}; };
+  return { n:wins.length, manual:false, session:true,
+    hnr:stat(wins.map(w=>w.hnr)),   shim:stat(wins.map(w=>w.shimmer)),
+    jit:stat(wins.map(w=>w.jitter)), pause:stat(wins.map(w=>w.pauseRatio)),
+    slope:stat(wins.map(w=>w.intSlope)) };
+}
 
 async function lisStart(opts){
   if(lis.phase==='running') return;
   const baseMode=!!(opts&&opts.baseline);
-  Object.assign(lis,{phase:'running',frames:[],level:0,lastFrameAt:0,winSilent:0,
+  Object.assign(lis,{phase:'running',frames:[],level:0,lastFrameAt:0,winSilent:0,sessWins:[],
     baselineMode:baseMode, baseWin:0, baseVoiced:0});
   render();
   try{
@@ -548,7 +559,9 @@ async function finalizeWindow(spanS){
     return;
   }
   lis.secToday+=spanS;
-  const idx=vocalIndex(m,lis.baseline);
+  lis.sessWins.push({hnr:m.hnr, shimmer:m.shimmer, jitter:m.jitter, pauseRatio:m.pauseRatio, intSlope:m.intSlope});
+  const B = lis.baseline || buildSessBaseline(lis.sessWins);   // demo: la sessione fa da riferimento se non c'è baseline
+  const idx=vocalIndex(m,B);
   if(SBOK && PID){
     try{
       await sb.from('voice_windows').insert({patient_id:PID, duration_s:spanS,
@@ -1381,7 +1394,7 @@ function ScreenHome(){
   if(en.conta)    testsRows+=todoRow(!!STATE.today.tests.conta,   'Conta in un respiro','riserva respiratoria · ore '+SET.tests_time,"setTab('test');openTest('conta')");
   if(en.armdrift) testsRows+=todoRow(!!STATE.today.tests.armdrift,'Arm drift','tenuta del braccio 30 s · ore '+SET.tests_time,"setTab('test');openTest('armdrift')");
   const idx=STATE.lastIndex;
-  const idxSpark=STATE.daily.length>1?spark(STATE.daily.slice(-7).map(d=>d.vocal_index??50),50,C.voice,40,260):'';
+  const idxSpark=STATE.daily.length>=1?spark(STATE.daily.slice(-7).map(d=>d.vocal_index??50),50,C.voice,40,260):'';
   const alertsHtml=STATE.alerts.length? STATE.alerts.slice(0,3).map(a=>
       '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:8px;">'+
       '<span class="badge '+a.level+'" style="flex-shrink:0;">'+(a.level==='alert'?'alert':'attenzione')+'</span>'+
@@ -1422,7 +1435,7 @@ function ScreenHome(){
 
 function baselineInfoLine(){
   const b=lis.baseline;
-  if(!b) return 'nessun baseline ancora: l\u2019indice parte dopo le prime finestre';
+  if(!b) return 'ancora nessun baseline salvato: l\u2019indice usa come riferimento la registrazione in corso (parte da ~50)';
   return b.manual
     ? 'riferimento fissato da te · '+b.n+' finestre'
     : 'baseline automatico · prime '+b.n+' finestre';
@@ -1723,14 +1736,14 @@ function ScreenTrend(){
     const last=serie.length?serie[serie.length-1]:null;
     return '<div class="card" style="padding:12px;">'+
       '<div class="row-flex"><span style="font-size:12px;font-weight:700;">'+label+'</span><span class="mono" style="font-size:12px;color:var(--inkSoft);">'+(last!=null?(+last).toFixed(1)+unit:'—')+'</span></div>'+
-      (serie.length>1?spark(serie,null,C.inkSoft,32,240):'<div style="font-size:11px;color:var(--inkSoft);">—</div>')+'</div>';
+      (serie.length>=1?spark(serie,null,C.inkSoft,32,240):'<div style="font-size:11px;color:var(--inkSoft);">—</div>')+'</div>';
   };
   return '<h2 style="font-size:21px;margin-top:10px;">Andamento</h2>'+
   '<div class="seclabel" style="margin-top:12px;">Indice vocale · 30 giorni</div>'+
-  '<div class="card">'+(idxSeries.length>1?spark(idxSeries,50,C.voice,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Ancora pochi dati: indossa la collana per qualche giorno.</div>')+
+  '<div class="card">'+(idxSeries.length>=1?spark(idxSeries,50,C.voice,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Ancora pochi dati: indossa la collana per qualche giorno.</div>')+
   '<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">50 = baseline personale · sopra 70 attenzione, sopra 85 alert · <b>sperimentale</b></div></div>'+
   '<div class="seclabel">MG-ADL dal check-in</div>'+
-  '<div class="card">'+(scSeries.length>1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-in per iniziare la serie.</div>')+
+  '<div class="card">'+(scSeries.length>=1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-in per iniziare la serie.</div>')+
   (STATE.scales.length?'<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">ultimo: <b>'+STATE.scales[0].total+'/24</b> · '+fmtDate(STATE.scales[0].taken_at)+' '+fmtTime(STATE.scales[0].taken_at)+(STATE.scales[0].before_meds?' · prima dei farmaci':'')+'</div>':'')+'</div>'+
   '<div class="seclabel">Parametri della voce · 14 giorni</div>'+
   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">'+
@@ -2117,6 +2130,8 @@ function chatKey(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); cha
 
 /* pulsante rapido: esegue l'azione e annota il dialogo (affidabile, senza modello) */
 function chip(name,tipo){
+  // toccare un'azione interrompe l'avvio guidato: l'utente sceglie liberamente
+  if(chat.routine){ chat.routine.active=false; routineStopListen(); }
   const label=actionLabel(name,tipo);
   let userText, botText;
   if(name==='segna_terapia'){ userText='Ho preso la terapia'; botText='Perfetto, la segno come presa.'; }
@@ -2299,14 +2314,16 @@ function ScreenHorus(){
   chips+='<button class="chip" onclick="chip(\u0027apri_andamento\u0027)">📈 Andamento</button>';
   if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>'+chips;
 
-  // avvio guidato: se la routine vocale è attiva, mostra microfono + Sì/No al posto dei chip
+  // avvio guidato: i controlli vocali del passo corrente si AGGIUNGONO ai chip,
+  // così i test (e ogni altra azione) restano sempre toccabili anche durante la routine
   if(chat.routine && chat.routine.active){
     const lisn=chat.routine.listening;
-    chips =
+    const ctl =
       '<button class="chip primary" onclick="'+(lisn?'routineStopListen()':'routineListen()')+'">'+
         (lisn?'🔴 Sto ascoltando… tocca per fermare':'🎤 Rispondi a voce')+'</button>'+
       '<button class="chip" onclick="routineAnswer(\u0027yes\u0027)">Sì</button>'+
       '<button class="chip" onclick="routineAnswer(\u0027no\u0027)">No</button>';
+    chips = ctl + chips;
   }
 
   const micEnabled=sttSupported();
