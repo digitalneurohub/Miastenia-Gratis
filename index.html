@@ -132,7 +132,7 @@
   .composer .cbtn.send{grid-column:3;justify-self:start;width:46px;height:46px;background:var(--primary);}   /* freccia di invio a destra, accanto al microfono */
   .composer .cbtn.send:disabled{background:var(--line);}
   .composer .micph{grid-column:2;justify-self:center;width:64px;height:64px;}
-  .liveoverlay{position:absolute;inset:0;z-index:40;background:rgba(238,243,238,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
+  .liveoverlay{position:fixed;inset:0;z-index:120;background:rgba(238,243,238,.98);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
   .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.35);animation:mgPulse 1.3s ease-in-out infinite;}
   .liveoverlay .livewords{font-size:27px;line-height:1.32;font-weight:600;color:var(--ink);max-height:42vh;overflow-y:auto;min-height:42px;width:100%;}
   .liveoverlay .livehint{color:var(--inkSoft);font-weight:500;font-size:18px;}
@@ -844,8 +844,11 @@ function chkMic(){
       if(e.results[i].isFinal) finalTxt+=t; else interim+=t;
     }
     chk.live=interim;
+    const full=(finalTxt+interim).trim();
     const ta=document.getElementById('chkAns');
-    if(ta) ta.value=(finalTxt+interim).trim();
+    if(ta) ta.value=full;
+    const big=document.getElementById('chkLiveBig');
+    if(big && full) big.textContent=full;        // parole a schermo intero in tempo reale
   };
   rec.onend=()=>{
     chk.listening=false; chk.live='';
@@ -1723,7 +1726,14 @@ function ScreenCheckin(){
   }
   const q=CHK_Q[chk.step];
   const dots=CHK_Q.map((_,i)=>'<span class="'+(i<chk.step?'done':i===chk.step?'cur':'')+'"></span>').join('');
-  return '<div class="dots" style="margin-top:14px;">'+dots+'</div>'+
+  return (chk.listening?
+    '<div class="liveoverlay">'+
+      '<div class="livedot"><svg width="40" height="40" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="#fff"/></svg></div>'+
+      '<div class="livewords" id="chkLiveBig">'+(chk.live?esc(chk.live):'<span class="livehint">Ti ascolto… parla pure</span>')+'</div>'+
+      '<button class="btn voice" style="font-size:16px;padding:14px 28px;" onclick="chkMic()">Fatto</button>'+
+    '</div>'
+  :'')+
+  '<div class="dots" style="margin-top:14px;">'+dots+'</div>'+
   '<div style="font-size:11px;color:var(--inkSoft);text-align:center;margin-top:6px;">'+(chk.step+1)+' di '+CHK_Q.length+' · '+ITEM_LABEL[q.key]+'</div>'+
   '<div class="bubble bot">'+esc(q.q)+'</div>'+
   (chk.answers[chk.step]&&!chk.listening?'<div class="bubble me">'+esc(chk.answers[chk.step])+'</div>':'')+
