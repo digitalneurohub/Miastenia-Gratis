@@ -79,7 +79,7 @@
   .lisdot.on{background:var(--voice);animation:mgPulse 1.4s ease-in-out infinite;}
 
   .appwrap{flex:1;display:flex;flex-direction:column;min-height:0;}
-  .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px max(16px,calc(50% - 280px)) 24px;}
+  .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:calc(14px + env(safe-area-inset-top)) max(16px,calc(50% - 280px)) 24px;}
   .bottomnav{display:flex;gap:2px;background:var(--card);flex-shrink:0;margin:8px max(18px,calc(50% - 262px)) calc(12px + env(safe-area-inset-bottom));border-radius:999px;box-shadow:0 8px 28px rgba(27,58,42,.12);padding:7px;}
   .bottomnav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 0 6px;border:none;background:transparent;color:#8AA191;border-radius:999px;font-weight:600;font-size:10px;}
   .bottomnav button.active{color:#fff;background:var(--primary);font-weight:700;}
@@ -164,11 +164,6 @@
 </head>
 <body>
 
-<header class="appbar">
-  <button class="iconbtn" onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-  </button>
-</header>
 <div id="envDiag" style="flex-shrink:0;"></div>
 
 <div id="patientView" class="appwrap">
@@ -2556,12 +2551,15 @@ function ScreenHorus(){
     '<div class="horushead">'+
       '<div class="horusav'+(chat.busy?' think':'')+'" id="horusAv">'+horusAvatarSVG()+'</div>'+
       '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:17px;">Horus</div>'+
-      '<div style="font-size:11.5px;color:var(--inkSoft);">assistente per il monitoraggio · sperimentale</div></div>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);">sempre con te</div></div>'+
       '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">'+
         '<button onclick="toggleHorusMute()" aria-label="'+(SET.tts?'Disattiva voce':'Attiva voce')+'" title="'+(SET.tts?'Voce attiva (tocca per mutare)':'Voce disattivata (tocca per attivare)')+'" style="all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:'+(SET.tts?'var(--voice)':'var(--inkSoft)')+';background:var(--card);">'+
           (SET.tts
             ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
             : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="m16 9 5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')+
+        '</button>'+
+        '<button onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni" style="all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--inkSoft);background:var(--card);">'+
+          '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'+
         '</button>'+idxPill+progPill+'</div>'+
     '</div>'+
     '<div class="chatscroll" id="chatScroll">'+
