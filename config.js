@@ -17,7 +17,8 @@ const MG_CONFIG = {
   // --- Parametri demo ---
   DEFAULT_PATIENT_CODE: 'MG-001', // prefisso del codice paziente generato al primo avvio
   WINDOW_SECONDS: 30,             // durata della finestra di analisi vocale "collana"
-  USE_TTS_DEFAULT: true           // l'app legge le domande del check-in ad alta voce
+  USE_TTS_DEFAULT: true,          // l'app legge le domande del check-in ad alta voce
+  TTS_CLOUD_VOICE: 'it-IT-Wavenet-D' // voce Google per "Voce naturale (cloud)" — deve combaciare con la Edge Function e con gen-prompts.mjs
 };
 
 // true solo quando l'URL è stato davvero compilato
