@@ -8,8 +8,8 @@ const MG_CONFIG = {
   APP_NAME: 'Horus',
 
   // --- Supabase (Dashboard → Project Settings → API) ---
-  SUPABASE_URL: 'https://TUO-PROGETTO.supabase.co',
-  SUPABASE_ANON_KEY: 'INCOLLA-QUI-LA-ANON-KEY',
+  SUPABASE_URL: 'https://nlovdhxymuvnxnveampb.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_wiMyt2rTURQFrdEAX0gtKQ_0VR8hi0A',
 
   // --- Web Push (genera con: npx web-push generate-vapid-keys) ---
   VAPID_PUBLIC_KEY: 'INCOLLA-QUI-LA-VAPID-PUBLIC-KEY',
