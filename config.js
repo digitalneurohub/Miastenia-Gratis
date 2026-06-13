@@ -18,7 +18,11 @@ const MG_CONFIG = {
   DEFAULT_PATIENT_CODE: 'MG-001', // prefisso del codice paziente generato al primo avvio
   WINDOW_SECONDS: 30,             // durata della finestra di analisi vocale "collana"
   USE_TTS_DEFAULT: true,          // l'app legge le domande del check-in ad alta voce
-  TTS_CLOUD_VOICE: 'it-IT-Wavenet-D' // voce Google per "Voce naturale (cloud)" — deve combaciare con la Edge Function e con gen-prompts.mjs
+
+  // --- Voce naturale (cloud, Google) — devono combaciare con la Edge Function e con gen-prompts.mjs ---
+  TTS_CLOUD_VOICE: 'it-IT-Wavenet-D', // voce Google (vedi libreria voci: https://cloud.google.com/text-to-speech/docs/voices)
+  TTS_CLOUD_PITCH: -2.5,          // tono: negativo = più basso/caldo (range -20..20). Ignorato dalle voci Chirp3-HD
+  TTS_CLOUD_RATE: 0.97            // velocità: <1 = più lenta e posata (range 0.25..4)
 };
 
 // true solo quando l'URL è stato davvero compilato
