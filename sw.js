@@ -1,84 +1,2699 @@
-/* Horus — service worker
-   1) Cache offline (cache-first per le risorse statiche della stessa origine)
-   2) Web Push: riceve le notifiche inviate dalla Edge Function `send-reminders`
-      e al tocco apre l'app sulla schermata giusta (?checkin=1 / ?tests=1).
-   Quando aggiorni i file statici incrementa la versione qui sotto. */
-const CACHE = 'horus-v4';
-const ASSETS = [
-  './',
-  './index.html',
-  './medico.html',
-  './config.js',
-  './manifest.webmanifest',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
-];
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Horus · monitoraggio vocale della miastenia gravis</title>
 
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE)
-      .then(c => Promise.allSettled(ASSETS.map(a => c.add(a))))
-      .then(() => self.skipWaiting())
-  );
-});
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2D7A52">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Horus">
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
-});
+<!--
+  Horus — demo di presentazione
+  · "Collana" vocale: il microfono del telefono estrae in locale i parametri
+    acustici (F0, HNR, jitter, shimmer, pause, intensità); l'audio non viene
+    mai salvato né trasmesso, viaggiano solo i numeri verso Supabase.
+  · Check-in conversazionale: domande informali a voce → trascrizione →
+    Claude API (via Edge Function) compila la MG-ADL → database.
+  · Test opzionali su notifica: ptosi, conta in un respiro, arm drift.
+  Configurazione in config.js · setup completo in SETUP.md
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
-self.addEventListener('fetch', e => {
-  // Solo GET della stessa origine: le chiamate a Supabase/CDN passano dirette.
-  if (e.request.method !== 'GET') return;
-  const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return;
-  e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(hit => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
-        }
-        return res;
-      }).catch(() => hit || (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error()));
-      return hit || net;
-    })
-  );
-});
+  :root{
+    --bg:#EEF3EE; --card:#FFFFFF; --ink:#1B3A2A; --inkSoft:#61756A;
+    --line:#DDE4DF; --primary:#2D7A52; --primarySoft:#DCEBDF;
+    --voice:#1F6E78; --voiceSoft:#DEEBEC;            /* identità "collana" */
+    --ok:#2D7A52; --okSoft:#DCEBDF; --warn:#A8730F; --warnSoft:#F6ECD7;
+    --alert:#B3372E; --alertSoft:#F8E5E2;
+    --font:'Albert Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
+  button{font-family:inherit;cursor:pointer;}
+  input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);}
+  :focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
+  .mono{font-family:var(--mono);}
+  @keyframes mgPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.5}}
+  @keyframes ringIdle{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.06);opacity:.8}}
+  @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important;}}
 
-/* ---------- Web Push ---------- */
-self.addEventListener('push', e => {
-  let data = {};
-  try { data = e.data ? e.data.json() : {}; } catch (_) { data = { body: e.data && e.data.text() }; }
-  const title = data.title || 'Horus';
-  const opts = {
-    body: data.body || '',
-    icon: './icons/icon-192.png',
-    badge: './icons/icon-192.png',
-    tag: data.tag || 'horus',
-    renotify: true,
-    data: { url: data.url || './' }
+  .card{background:var(--card);border:none;border-radius:20px;padding:16px;box-shadow:0 4px 16px rgba(27,58,42,.05);}
+  .seclabel{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkSoft);margin:18px 2px 8px;}
+  .badge{font-size:11.5px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap;display:inline-block;}
+  .badge.ok{background:var(--okSoft);color:var(--ok);}
+  .badge.warn{background:var(--warnSoft);color:var(--warn);}
+  .badge.alert{background:var(--alertSoft);color:var(--alert);}
+  .badge.neutral{background:var(--primarySoft);color:var(--primary);}
+  .badge.voice{background:var(--voiceSoft);color:var(--voice);}
+
+  .btn{background:var(--card);color:#1B4D33;border:2px solid #C7D7CC;border-radius:999px;padding:13px 18px;font-size:14.5px;font-weight:700;}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .btn.voice{background:var(--voice);border-color:var(--voice);color:#fff;}
+  .btn.small{padding:7px 12px;font-size:13px;}
+  .btn.full{width:100%;}
+  .btn:disabled{opacity:.45;cursor:default;}
+
+  .row-flex{display:flex;justify-content:space-between;align-items:center;}
+  .hidden{display:none !important;}
+  .tile{background:var(--bg);border-radius:14px;padding:10px;text-align:center;}
+  .tile .v{font-family:var(--mono);font-size:18px;font-weight:600;}
+  .tile .l{font-size:10.5px;color:var(--inkSoft);margin-top:2px;}
+
+  /* app bar */
+  .appbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 20px;background:var(--bg);flex-shrink:0;padding-top:calc(12px + env(safe-area-inset-top));}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+  .brand img{width:34px;height:34px;border-radius:999px;flex-shrink:0;}
+  .brandname{font-weight:700;font-size:16px;line-height:1.15;}
+  .brandsub{font-size:11px;color:var(--inkSoft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .iconbtn{display:flex;align-items:center;gap:7px;border:none;background:var(--card);color:var(--primary);border-radius:999px;padding:9px 12px;font-weight:700;font-size:13px;flex-shrink:0;box-shadow:0 2px 8px rgba(27,58,42,.10);}
+  .lisdot{width:9px;height:9px;border-radius:999px;background:#C7D7CC;flex-shrink:0;}
+  .lisdot.on{background:var(--voice);animation:mgPulse 1.4s ease-in-out infinite;}
+
+  .appwrap{flex:1;display:flex;flex-direction:column;min-height:0;}
+  .screen{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px max(16px,calc(50% - 280px)) 24px;}
+  .bottomnav{display:flex;gap:2px;background:var(--card);flex-shrink:0;margin:8px max(18px,calc(50% - 262px)) calc(12px + env(safe-area-inset-bottom));border-radius:999px;box-shadow:0 8px 28px rgba(27,58,42,.12);padding:7px;}
+  .bottomnav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 0 6px;border:none;background:transparent;color:#8AA191;border-radius:999px;font-weight:600;font-size:10px;}
+  .bottomnav button.active{color:#fff;background:var(--primary);font-weight:700;}
+  .bottomnav .ic{display:flex;align-items:center;justify-content:center;height:20px;}
+
+  /* ---------- firma visiva: il pendente in ascolto ---------- */
+  .pendant{position:relative;width:200px;height:200px;margin:14px auto 6px;}
+  .pendant .rw{position:absolute;inset:0;border-radius:999px;border:2.5px solid var(--voice);opacity:.5;transition:transform .12s linear;}
+  .pendant .rw.r2{inset:18px;opacity:.65;}
+  .pendant .rw.r3{inset:36px;opacity:.85;}
+  .pendant.idle .rw{animation:ringIdle 2.8s ease-in-out infinite;}
+  .pendant.idle .rw.r2{animation-delay:.4s;}
+  .pendant.idle .rw.r3{animation-delay:.8s;}
+  .pendant .core{position:absolute;inset:54px;border-radius:999px;background:var(--voice);display:grid;place-items:center;color:#fff;box-shadow:0 10px 26px rgba(31,110,120,.35);}
+
+  /* ---------- chat del check-in ---------- */
+  .bubble{max-width:86%;padding:12px 15px;border-radius:18px;font-size:14.5px;line-height:1.5;margin-top:10px;}
+  .bubble.bot{background:var(--card);border-bottom-left-radius:6px;box-shadow:0 3px 12px rgba(27,58,42,.06);}
+  .bubble.me{background:var(--voiceSoft);color:#14474E;margin-left:auto;border-bottom-right-radius:6px;}
+  .micbtn{width:74px;height:74px;border-radius:999px;border:none;background:var(--voice);color:#fff;display:grid;place-items:center;margin:14px auto 4px;box-shadow:0 8px 22px rgba(31,110,120,.35);}
+  .micbtn.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
+  .dots{display:flex;gap:6px;justify-content:center;margin-top:8px;}
+  .dots span{width:8px;height:8px;border-radius:999px;background:var(--line);}
+  .dots span.done{background:var(--voice);}
+  .dots span.cur{background:var(--primary);transform:scale(1.25);}
+
+  /* ---------- Horus (assistente) ---------- */
+  .horuswrap{display:flex;flex-direction:column;height:100%;position:relative;}
+  .horushead{display:flex;align-items:center;gap:12px;padding:2px 2px 12px;}
+  .horusav{width:46px;height:46px;border-radius:999px;background:linear-gradient(135deg,var(--voice),var(--primary));display:grid;place-items:center;flex-shrink:0;box-shadow:0 6px 16px rgba(31,110,120,.32);}
+  .horusav.think{animation:mgPulse 1.4s ease-in-out infinite;}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;background:var(--card);box-shadow:0 2px 8px rgba(27,58,42,.06);}
+  .chatscroll{flex:1;overflow-y:auto;padding:2px 1px 6px;}
+  .typing{display:inline-flex;gap:4px;padding:12px 16px;}
+  .typing span{width:7px;height:7px;border-radius:999px;background:var(--inkSoft);opacity:.5;animation:mgBounce 1s infinite;}
+  .typing span:nth-child(2){animation-delay:.15s;} .typing span:nth-child(3){animation-delay:.3s;}
+  @keyframes mgBounce{0%,80%,100%{transform:translateY(0);opacity:.4;}40%{transform:translateY(-4px);opacity:.9;}}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .chip{all:unset;cursor:pointer;font-size:13px;font-weight:600;border-radius:999px;padding:8px 14px;background:var(--card);border:1.5px solid var(--line);color:#1B4D33;display:inline-flex;align-items:center;gap:7px;}
+  .chip.primary{background:var(--voice);border-color:var(--voice);color:#fff;}
+  .chip.done{opacity:.5;}
+  .composer{display:flex;align-items:flex-end;gap:8px;padding:8px 1px calc(4px + env(safe-area-inset-bottom));}
+  .composer textarea{flex:1;border:2px solid var(--line);border-radius:20px;padding:10px 14px;background:var(--card);max-height:120px;min-height:44px;resize:none;font-family:inherit;font-size:14.5px;line-height:1.4;}
+  .composer .cbtn{width:44px;height:44px;border-radius:999px;border:none;display:grid;place-items:center;flex-shrink:0;color:#fff;}
+  .composer .cbtn.mic{background:var(--voice);} .composer .cbtn.mic.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
+  .composer .cbtn.send{background:var(--primary);} .composer .cbtn.send:disabled{background:var(--line);}
+  .composer .cbtn.mic{width:56px;height:56px;}   /* pulsante per registrare, più grande */
+  .composer .cbtn.clear{width:40px;height:40px;background:var(--line);color:var(--inkSoft);}
+  .liveoverlay{position:absolute;inset:0;z-index:40;background:rgba(238,243,238,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
+  .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.35);animation:mgPulse 1.3s ease-in-out infinite;}
+  .liveoverlay .livewords{font-size:27px;line-height:1.32;font-weight:600;color:var(--ink);max-height:42vh;overflow-y:auto;min-height:42px;width:100%;}
+  .liveoverlay .livehint{color:var(--inkSoft);font-weight:500;font-size:18px;}
+  .liveoverlay .liverow{display:flex;gap:12px;}
+
+  /* ---------- impostazioni ---------- */
+  .modal{position:fixed;inset:0;background:rgba(27,58,42,.35);display:grid;place-items:end center;z-index:50;}
+  .sheet{background:var(--bg);width:100%;max-width:560px;max-height:88dvh;overflow-y:auto;border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));}
+  .field{margin-top:12px;}
+  .field label{display:block;font-size:12px;font-weight:700;color:var(--inkSoft);margin-bottom:5px;}
+  .field input[type=text],.field input[type=time]{width:100%;border:2px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);}
+  .switchrow{display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:14px;padding:12px 14px;margin-top:8px;}
+  .switch{position:relative;width:46px;height:26px;flex-shrink:0;}
+  .switch input{opacity:0;width:0;height:0;}
+  .switch i{position:absolute;inset:0;background:var(--line);border-radius:999px;transition:.2s;}
+  .switch i::after{content:'';position:absolute;width:20px;height:20px;border-radius:999px;background:#fff;top:3px;left:3px;transition:.2s;box-shadow:0 1px 4px rgba(0,0,0,.2);}
+  .switch input:checked + i{background:var(--primary);}
+  .switch input:checked + i::after{left:23px;}
+
+  textarea.ans{width:100%;border:2px solid var(--line);border-radius:14px;padding:11px 13px;background:var(--card);min-height:74px;resize:vertical;margin-top:10px;}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(86px + env(safe-area-inset-bottom));background:#1B3A2A;color:#fff;font-size:13px;padding:10px 16px;border-radius:999px;z-index:80;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:88%;text-align:center;}
+  h1,h2{margin:0;}
+  details summary{cursor:pointer;font-size:13.5px;color:var(--primary);font-weight:600;}
+  @media (max-width:480px){ .appbar{padding-left:12px;padding-right:12px;} }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="brand">
+    <img src="icons/icon-192.png" alt="" onerror="this.style.display='none'">
+    <div style="min-width:0;">
+      <div class="brandname" id="brandName">Horus</div>
+      <div class="brandsub" id="appSub">Collana vocale · miastenia gravis</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span class="lisdot" id="lisDot" title="Stato collana"></span>
+    <button class="iconbtn" onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+  </div>
+</header>
+<div id="envDiag" style="flex-shrink:0;"></div>
+
+<div id="patientView" class="appwrap">
+  <div class="screen" id="screen">
+    <div class="card" style="margin-top:20px;padding:18px;border-left:4px solid #B3372E;">
+      <div style="font-weight:700;font-size:15px;color:#B3372E;">⚠ JavaScript non attivo</div>
+      <div style="margin-top:8px;font-size:13.5px;line-height:1.6;">Apri questa pagina con Chrome o Safari da un indirizzo https (es. GitHub Pages): l'anteprima dei file non esegue gli script.</div>
+    </div>
+  </div>
+  <nav class="bottomnav" id="nav" aria-label="Navigazione principale"></nav>
+</div>
+
+<div id="onboardRoot"></div>
+<div id="settingsRoot"></div>
+<div id="toastRoot"></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ================= stato globale, client, helper ================= */
+const C={primary:'#2D7A52',voice:'#1F6E78',alert:'#B3372E',warn:'#A8730F',ok:'#2D7A52',inkSoft:'#61756A'};
+let sb=null, SBOK=false, PID=null;          // client supabase, id paziente
+function initSupabase(){
+  try{
+    if(typeof MG_CONFIGURED!=='undefined' && MG_CONFIGURED && window.supabase){
+      sb=window.supabase.createClient(MG_CONFIG.SUPABASE_URL, MG_CONFIG.SUPABASE_ANON_KEY);
+      SBOK=true;
+    }
+  }catch(_){ SBOK=false; }
+}
+
+/* impostazioni locali (specchiate sulla riga `patients`) */
+const DEF_SET={first_name:'', last_name:'', name:'', onboarded:false,
+  code:'', checkin_time:'07:30', tests_time:'18:00', meds_time:'08:00',
+  tests_enabled:{ptosi:true,conta:true,armdrift:true},
+  tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT, voiceMode:'system', voiceAsked:false};
+let SET=loadSettings();
+function loadSettings(){
+  try{ const s=JSON.parse(localStorage.getItem('mg_settings')||'null');
+       const merged=s?Object.assign({},DEF_SET,s,{tests_enabled:Object.assign({},DEF_SET.tests_enabled,s.tests_enabled||{})}):Object.assign({},DEF_SET);
+       // un codice paziente stabile per questo dispositivo (autogenerato la prima volta)
+       if(!merged.code) merged.code=genPatientCode();
+       // migrazione: versioni vecchie avevano solo `name` -> ricavo nome e cognome
+       if((!merged.first_name && !merged.last_name) && merged.name && merged.name.trim()){
+         const parts=merged.name.trim().split(/\s+/);
+         merged.first_name=parts.shift()||'';
+         merged.last_name=parts.join(' ');
+         merged.onboarded=true;
+       }
+       merged.name=fullName(merged);
+       return merged;
+  }catch(_){ const d=Object.assign({},DEF_SET); d.code=genPatientCode(); return d; }
+}
+function genPatientCode(){
+  const def=(typeof MG_CONFIG!=='undefined'&&MG_CONFIG.DEFAULT_PATIENT_CODE)?String(MG_CONFIG.DEFAULT_PATIENT_CODE):'MG';
+  // prendo solo la parte alfabetica iniziale come prefisso (es. "MG-001" -> "MG")
+  const alpha=(def.match(/^[A-Za-z]+/)||['MG'])[0].toUpperCase();
+  const prefix=alpha.slice(0,6)||'MG';
+  const rnd=Math.random().toString(36).slice(2,7).toUpperCase();
+  return prefix+'-'+rnd;
+}
+function fullName(s){ return [s.first_name,s.last_name].filter(x=>x&&x.trim()).join(' ').trim(); }
+function saveSettings(){ SET.name=fullName(SET); try{localStorage.setItem('mg_settings',JSON.stringify(SET));}catch(_){} }
+
+/* sessione di Horus salvata per giornata: thread + "ho già salutato/fatto il giro".
+   All'apertura ripristina la conversazione invece di rifare il saluto da capo
+   (e nessuna chiamata AI all'avvio → niente token sprecati). */
+function horusSessionKey(){ return 'mg_horus_'+todayISO(); }
+function saveHorusSession(){
+  try{ localStorage.setItem(horusSessionKey(), JSON.stringify({ msgs:(chat.msgs||[]).slice(-40), greeted:true, routineDone:!!chat.routine.done })); }catch(_){}
+}
+function loadHorusSession(){
+  try{
+    const key=horusSessionKey();
+    // rimuovi le sessioni dei giorni precedenti (un nuovo giorno → saluto fresco)
+    for(let i=(localStorage.length||0)-1;i>=0;i--){ const k=localStorage.key(i); if(k && k.indexOf('mg_horus_')===0 && k!==key) localStorage.removeItem(k); }
+    const raw=localStorage.getItem(key);
+    return raw?JSON.parse(raw):null;
+  }catch(_){ return null; }
+}
+
+async function ensurePatient(){
+  if(!SBOK) return null;
+  try{
+    const row={code:SET.code, display_name:fullName(SET)||null,
+      first_name:SET.first_name||null, last_name:SET.last_name||null,
+      meds_time:SET.meds_time||null,
+      checkin_time:SET.checkin_time, tests_time:SET.tests_time, tests_enabled:SET.tests_enabled,
+      tz:Intl.DateTimeFormat().resolvedOptions().timeZone||'Europe/Rome'};
+    const {data,error}=await sb.from('patients').upsert(row,{onConflict:'code'}).select('id').single();
+    if(error) throw error;
+    PID=data.id; return PID;
+  }catch(e){ console.warn('ensurePatient',e); toast('Sincronizzazione paziente non riuscita'); return null; }
+}
+
+function toast(msg,ms=2600){
+  const r=document.getElementById('toastRoot');
+  r.innerHTML='<div class="toast">'+esc(msg)+'</div>';
+  clearTimeout(toast._t); toast._t=setTimeout(()=>{r.innerHTML='';},ms);
+}
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function todayISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function nowHM(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fmtDate(d){ return new Date(d).toLocaleDateString('it-IT',{day:'numeric',month:'short'}); }
+function fmtTime(d){ return new Date(d).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); }
+
+/* sparkline SVG (dalla app MG-Sense) */
+function spark(data,baseline,color,h=44,w=280){
+  if(!data || data.length<1) return '<div style="font-size:12px;color:var(--inkSoft);">dati insufficienti</div>';
+  const all=baseline!=null?data.concat([baseline]):data;
+  const min=Math.min(...all)-4, max=Math.max(...all)+4; const den=(max-min)||1;
+  const x=i=> data.length<2 ? (w/2) : (i/(data.length-1))*(w-6)+3;
+  const y=v=>h-5-((v-min)/den)*(h-10);
+  const path=data.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ');
+  const base=baseline!=null?'<line x1="3" x2="'+(w-3)+'" y1="'+y(baseline).toFixed(1)+'" y2="'+y(baseline).toFixed(1)+'" stroke="'+C.inkSoft+'" stroke-dasharray="4 4" stroke-width="1.2"/>':'';
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block" aria-hidden="true">'+base+
+    '<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="2.2" stroke-linecap="round"/>'+
+    '<circle cx="'+x(data.length-1).toFixed(1)+'" cy="'+y(data[data.length-1]).toFixed(1)+'" r="3.4" fill="'+color+'"/></svg>';
+}
+
+/* dati condivisi tra le schermate (riempiti da refreshData) */
+const STATE={today:{checkin:false,tests:{},meds:{}}, daily:[], scales:[], alerts:[], meds:[], medsLog:[], lastIndex:null, loading:false};
+async function refreshData(){
+  if(!SBOK || !PID){ render(); return; }
+  STATE.loading=true;
+  try{
+    const t0=todayISO();
+    const [sc,tr,vd,al,md,mi]=await Promise.all([
+      sb.from('scale_responses').select('id,total,items,taken_at,confidence,before_meds,model_notes').eq('patient_id',PID).order('taken_at',{ascending:false}).limit(20),
+      sb.from('test_results').select('test_type,metrics,taken_at').eq('patient_id',PID).order('taken_at',{ascending:false}).limit(15),
+      sb.from('vocal_daily').select('*').eq('patient_id',PID).order('day',{ascending:true}).limit(30),
+      sb.from('alerts').select('level,source,message,created_at').eq('patient_id',PID).order('created_at',{ascending:false}).limit(5),
+      sb.from('medications').select('id,name,dose,time_of_day,active,sort_order').eq('patient_id',PID).eq('active',true).order('time_of_day',{ascending:true}),
+      sb.from('med_intakes').select('id,medication_id,name,dose,taken_at,taken_on').eq('patient_id',PID).eq('taken_on',t0).order('taken_at',{ascending:false}),
+    ]);
+    STATE.scales=sc.data||[];
+    STATE.today.checkin=STATE.scales.some(s=>s.taken_at.slice(0,10)===t0);
+    STATE.today.tests={};
+    (tr.data||[]).forEach(t=>{ if(t.taken_at.slice(0,10)===t0) STATE.today.tests[t.test_type]=true; });
+    STATE.tests=tr.data||[];
+    STATE.daily=vd.data||[];
+    STATE.lastIndex=STATE.daily.length?STATE.daily[STATE.daily.length-1].vocal_index:null;
+    STATE.alerts=al.data||[];
+    STATE.meds=md.data||[];
+    STATE.medsLog=mi.data||[];
+    STATE.today.meds={};
+    (mi.data||[]).forEach(r=>{ if(r.medication_id) STATE.today.meds[r.medication_id]=r; });
+  }catch(e){ console.warn('refreshData',e); }
+  STATE.loading=false;
+  if(['horus','trend','terapia'].includes(currentTab)) render();
+}
+
+/* ============================================================
+   COLLANA — ascolto continuo con il microfono del telefono
+   DSP riusato da MG-Sense (autocorrelazione → F0, HNR, jitter,
+   shimmer, pause). Ogni finestra di WINDOW_SECONDS produce una
+   riga di parametri inviata a Supabase; l'audio resta sul device.
+   ============================================================ */
+function analyzeVoiceFrame(buf, sr){
+  const N=buf.length;
+  let mean=0; for(let i=0;i<N;i++) mean+=buf[i]; mean/=N;
+  let e0=0; for(let i=0;i<N;i++){ const v=buf[i]-mean; e0+=v*v; }
+  const rms=Math.sqrt(e0/N);
+  const SILENT={voiced:false,rms,f0:0,period:0,hnr:0,r:0,shAbs:0,shPairs:0,ampSum:0,ampN:0,ampMean:0};
+  if(rms<0.012) return SILENT;
+  const minLag=Math.max(2, Math.floor(sr/350));
+  const maxLag=Math.min(N-2, Math.floor(sr/75));
+  const rArr=new Float32Array(maxLag+2);
+  let rmax=0, lagAtMax=-1;
+  for(let lag=minLag; lag<=maxLag; lag++){
+    let acf=0,e=0,en=0;
+    for(let i=0;i<N-lag;i++){ const a=buf[i]-mean,b=buf[i+lag]-mean; acf+=a*b; e+=a*a; en+=b*b; }
+    const r=acf/(Math.sqrt(e*en)||1);
+    rArr[lag]=r;
+    if(r>rmax){ rmax=r; lagAtMax=lag; }
+  }
+  if(lagAtMax<2 || rmax<0.45){ const o=Object.assign({},SILENT); o.r=rmax; return o; }
+  const thr=0.85*rmax;
+  let bestLag=lagAtMax;
+  for(let lag=minLag+1; lag<maxLag; lag++){
+    if(rArr[lag]>=thr && rArr[lag]>=rArr[lag-1] && rArr[lag]>=rArr[lag+1]){ bestLag=lag; break; }
+  }
+  const bestR=rArr[bestLag];
+  let lag=bestLag;
+  if(bestLag>minLag && bestLag<maxLag){
+    const rm=rArr[bestLag-1], r0=bestR, rp=rArr[bestLag+1];
+    const den=(rm-2*r0+rp);
+    if(den!==0){ const delta=0.5*(rm-rp)/den; if(Math.abs(delta)<1) lag=bestLag+delta; }
+  }
+  const period=lag/sr, f0=sr/lag;
+  const r=Math.min(0.99999, Math.max(1e-6, bestR));
+  const hnr=10*Math.log10(r/(1-r));
+  let shAbs=0, shPairs=0, ampSum=0, ampN=0;
+  const nC=Math.floor(N/lag);
+  if(lag>=4 && nC>=2){
+    let prev=null;
+    for(let k=0;k<nC;k++){
+      const start=Math.round(k*lag), end=Math.min(N,Math.round((k+1)*lag));
+      let mn=Infinity, mx=-Infinity;
+      for(let i=start;i<end;i++){ const v=buf[i]-mean; if(v<mn)mn=v; if(v>mx)mx=v; }
+      const amp=mx-mn;
+      ampSum+=amp; ampN++;
+      if(prev!==null){ shAbs+=Math.abs(amp-prev); shPairs++; }
+      prev=amp;
+    }
+  }
+  const ampMean=ampN?ampSum/ampN:0;
+  return {voiced:true, rms, f0, period, hnr, r, shAbs, shPairs, ampSum, ampN, ampMean};
+}
+function vAvg(a){ return a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+function vSd(a){ if(a.length<2) return 0; const m=vAvg(a); return Math.sqrt(vAvg(a.map(x=>(x-m)**2))); }
+function jitterFromPeriods(periods){
+  if(periods.length<3) return 0;
+  let sumT=0,sumD=0;
+  for(const p of periods) sumT+=p;
+  for(let i=1;i<periods.length;i++) sumD+=Math.abs(periods[i]-periods[i-1]);
+  const meanT=sumT/periods.length, meanD=sumD/(periods.length-1);
+  return meanT>0 ? meanD/meanT*100 : 0;
+}
+function shimmerFromFrames(arr){
+  let a=0,p=0,s=0,n=0;
+  for(const f of arr){ a+=f.shAbs; p+=f.shPairs; s+=f.ampSum; n+=f.ampN; }
+  return (p>0 && n>0 && s>0) ? (a/p)/(s/n)*100 : 0;
+}
+
+/* aggrega i frame di una finestra nei parametri da salvare */
+function computeWindowMetrics(F, spanS){
+  const voiced=F.filter(f=>f.voiced);
+  const voicedRatio=F.length?voiced.length/F.length:0;
+  if(voiced.length<8) return {ok:false, voicedRatio};
+  const f0s=voiced.map(f=>f.f0).filter(x=>x>0);
+  // jitter per "run" di frame sonori adiacenti (come nel test bulbare MG-Sense)
+  let sumT=0,nT=0,sumD=0,nD=0, run=[];
+  const flush=()=>{ if(run.length>=2){ for(const p of run){sumT+=p;nT++;} for(let i=1;i<run.length;i++){sumD+=Math.abs(run[i]-run[i-1]);nD++;} } run=[]; };
+  for(const f of F){ if(f.voiced && f.period>0) run.push(f.period); else flush(); }
+  flush();
+  const jitter=(nD>0&&nT>0)?(sumD/nD)/(sumT/nT)*100:0;
+  // pause interne al parlato
+  const minPause=0.15, intervals=[];
+  const firstV=F.findIndex(f=>f.voiced);
+  let lastV=-1; for(let k=F.length-1;k>=0;k--){ if(F[k].voiced){lastV=k;break;} }
+  if(firstV>=0 && lastV>firstV){
+    let st=-1;
+    for(let k=firstV;k<=lastV;k++){
+      if(!F[k].voiced){ if(st<0) st=k; }
+      else if(st>=0){ const dur=F[k].t-F[st].t; if(dur>=minPause) intervals.push(dur); st=-1; }
+    }
+  }
+  const span=(firstV>=0&&lastV>firstV)?(F[lastV].t-F[firstV].t):0;
+  const pauseRatio=span>0?intervals.reduce((a,b)=>a+b,0)/span*100:0;
+  // intensità: media e pendenza (regressione lineare rms~t sui frame sonori)
+  const xs=voiced.map(f=>f.t), ys=voiced.map(f=>f.rms);
+  const mx=vAvg(xs), my=vAvg(ys);
+  let num=0,den=0; for(let i=0;i<xs.length;i++){ num+=(xs[i]-mx)*(ys[i]-my); den+=(xs[i]-mx)**2; }
+  const slopeAbs=den>0?num/den:0;                       // rms al secondo
+  const slopePct=my>0?slopeAbs/my*100*spanS:0;          // % sull'intera finestra
+  // ritmo: segmenti sonori (≥2 frame) al secondo di parlato
+  let segs=0, runLen=0;
+  for(const f of F){ if(f.voiced){runLen++;} else {if(runLen>=2)segs++; runLen=0;} }
+  if(runLen>=2)segs++;
+  const speechRate=span>0?segs/span:0;
+  return {ok:true, voicedRatio,
+    f0Mean:vAvg(f0s), f0Sd:vSd(f0s),
+    hnr:vAvg(voiced.map(f=>f.hnr)),
+    jitter, shimmer:shimmerFromFrames(voiced),
+    pauseRatio, intMean:my, intSlope:slopePct, speechRate};
+}
+
+/* stato dell'ascolto */
+const lis={phase:'idle', stream:null, actx:null, analyser:null, fbuf:null, sr:44100,
+  raf:null, frames:[], level:0, smooth:[0,0,0], lastFrameAt:0, t0:0, winT0:0,
+  winSent:0, winSilent:0, secToday:0, baseline:null, sessWins:[], wake:null,
+  baselineMode:false, baseWin:0, baseTarget:90, baseVoiced:0};
+
+async function loadBaseline(){
+  if(!SBOK || !PID) return null;
+  const build=(rows,manual)=>{
+    const pick=k=>rows.map(r=>r[k]).filter(v=>v!=null);
+    const stat=k=>{ const a=pick(k); return {m:vAvg(a), s:Math.max(vSd(a), 1e-6)}; };
+    return {n:rows.length, manual:!!manual, hnr:stat('hnr_mean'), shim:stat('shimmer_pct'),
+            jit:stat('jitter_pct'), pause:stat('pause_ratio'), slope:stat('intensity_slope')};
   };
-  e.waitUntil(self.registration.showNotification(title, opts));
-});
+  try{
+    // 1) baseline manuale: finestre fissate dal paziente quando "al meglio"
+    const man=await sb.from('voice_windows')
+      .select('hnr_mean,shimmer_pct,jitter_pct,pause_ratio,intensity_slope,started_at')
+      .eq('patient_id',PID).eq('is_baseline',true)
+      .order('started_at',{ascending:false}).limit(80);
+    if(man.data && man.data.length>=6){
+      // tengo solo la sessione manuale più recente (entro 30 min dall'ultima finestra)
+      const t0=new Date(man.data[0].started_at).getTime();
+      const sess=man.data.filter(r=> t0 - new Date(r.started_at).getTime() <= 30*60*1000);
+      return build(sess.length>=6?sess:man.data, true);
+    }
+    // 2) fallback: prime finestre di monitoraggio come baseline automatico
+    const {data}=await sb.from('voice_windows')
+      .select('hnr_mean,shimmer_pct,jitter_pct,pause_ratio,intensity_slope')
+      .eq('patient_id',PID).eq('is_baseline',false)
+      .order('started_at',{ascending:true}).limit(200);
+    if(!data || data.length<3) return null;
+    return build(data.slice(0, Math.min(30, Math.max(3, Math.floor(data.length/2)))), false);
+  }catch(_){ return null; }
+}
+/* indice vocale 0–100: 50 = baseline personale; pesi dichiarati e trasparenti */
+function vocalIndex(m,B){
+  if(!B) return null;
+  const z=(x,st)=> (x-st.m)/st.s;
+  const risk= 0.25*z(m.shimmer,B.shim) + 0.20*z(m.jitter,B.jit)
+            + 0.25*(-z(m.hnr,B.hnr))   + 0.20*z(m.pauseRatio,B.pause)
+            + 0.10*(-z(m.intSlope,B.slope));
+  return Math.round(Math.max(0,Math.min(100, 50+10*risk))*10)/10;
+}
+/* riferimento ricavato dalle finestre della sessione in corso: permette di
+   mostrare un indice fin dalla prima registrazione (demo), finché non esiste
+   un baseline persistito (manuale o automatico). La prima finestra dà ~50. */
+function buildSessBaseline(wins){
+  if(!wins || !wins.length) return null;
+  const stat=arr=>{ const a=arr.filter(v=>v!=null); return {m:vAvg(a), s:Math.max(vSd(a),1e-6)}; };
+  return { n:wins.length, manual:false, session:true,
+    hnr:stat(wins.map(w=>w.hnr)),   shim:stat(wins.map(w=>w.shimmer)),
+    jit:stat(wins.map(w=>w.jitter)), pause:stat(wins.map(w=>w.pauseRatio)),
+    slope:stat(wins.map(w=>w.intSlope)) };
+}
 
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
-  e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-      for (const c of list) {
-        if (c.url.startsWith(self.registration.scope)) {
-          c.postMessage({ type: 'open-url', url: target });
-          return c.focus();
-        }
+async function lisStart(opts){
+  if(lis.phase==='running') return;
+  const baseMode=!!(opts&&opts.baseline);
+  Object.assign(lis,{phase:'running',frames:[],level:0,lastFrameAt:0,winSilent:0,sessWins:[],
+    baselineMode:baseMode, baseWin:0, baseVoiced:0});
+  render();
+  try{
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('no-media');
+    // AGC/denoise OFF: altererebbero intensità, HNR, jitter e shimmer
+    lis.stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+    const AC=window.AudioContext||window.webkitAudioContext;
+    lis.actx=new AC(); await lis.actx.resume().catch(()=>{});
+    lis.sr=lis.actx.sampleRate||44100;
+    lis.analyser=lis.actx.createAnalyser(); lis.analyser.fftSize=2048;
+    lis.actx.createMediaStreamSource(lis.stream).connect(lis.analyser);
+    lis.fbuf=new Float32Array(lis.analyser.fftSize);
+    lis.t0=lis.winT0=performance.now();
+    if(!baseMode && !lis.baseline) lis.baseline=await loadBaseline();
+    try{ lis.wake=await navigator.wakeLock?.request('screen'); }catch(_){}
+    lis.raf=setInterval(lisTick,50);
+    const dot=document.getElementById('lisDot'); if(dot) dot.classList.add('on');
+    render();
+  }catch(e){
+    lis.phase='idle'; lis.baselineMode=false; render();
+    toast('Microfono non disponibile: consenti l\u2019accesso e riprova');
+  }
+}
+function baselineStart(){ lisStart({baseline:true}); }
+function lisTick(){
+  if(lis.phase!=='running') return;
+  const now=performance.now();
+  lis.analyser.getFloatTimeDomainData(lis.fbuf);
+  let s=0; for(let i=0;i<lis.fbuf.length;i++){const d=lis.fbuf[i]; s+=d*d;}
+  lis.level=Math.min(100, Math.sqrt(s/lis.fbuf.length)*340);
+  if(now-lis.lastFrameAt>=70){
+    lis.lastFrameAt=now;
+    const fr=analyzeVoiceFrame(lis.fbuf,lis.sr);
+    fr.t=(now-lis.winT0)/1000;
+    lis.frames.push(fr);
+  }
+  const winS = lis.baselineMode ? 10 : (typeof MG_CONFIG!=='undefined'?MG_CONFIG.WINDOW_SECONDS:30);
+  if((now-lis.winT0)/1000>=winS) finalizeWindow(winS);
+  if(lis.baselineMode){
+    if(lis.baseVoiced>=lis.baseTarget){ baselineStop(true); return; }
+    updateBaseLive();
+  } else updateLisLive();
+}
+async function finalizeWindow(spanS){
+  const F=lis.frames; lis.frames=[]; lis.winT0=performance.now();
+  const m=computeWindowMetrics(F,spanS);
+  const minVoiced = lis.baselineMode ? 0.12 : 0.06;
+  if(!m.ok || m.voicedRatio<minVoiced){ lis.winSilent++; return; }   // finestra muta: non salvata
+  if(lis.baselineMode){
+    const voicedSec=spanS*m.voicedRatio;
+    lis.baseVoiced+=voicedSec;
+    if(SBOK && PID){
+      try{
+        await sb.from('voice_windows').insert({patient_id:PID, duration_s:spanS,
+          voiced_ratio:+m.voicedRatio.toFixed(3), f0_mean:+m.f0Mean.toFixed(1), f0_sd:+m.f0Sd.toFixed(1),
+          hnr_mean:+m.hnr.toFixed(2), jitter_pct:+m.jitter.toFixed(2), shimmer_pct:+m.shimmer.toFixed(2),
+          pause_ratio:+m.pauseRatio.toFixed(1), intensity_mean:+m.intMean.toFixed(4),
+          intensity_slope:+m.intSlope.toFixed(2), speech_rate:+m.speechRate.toFixed(2),
+          vocal_index:null, is_baseline:true, source:'mic'});
+        lis.baseWin++;
+      }catch(e){ console.warn('baseline window',e); }
+    } else lis.baseWin++;
+    return;
+  }
+  lis.secToday+=spanS;
+  lis.sessWins.push({hnr:m.hnr, shimmer:m.shimmer, jitter:m.jitter, pauseRatio:m.pauseRatio, intSlope:m.intSlope});
+  const B = lis.baseline || buildSessBaseline(lis.sessWins);   // demo: la sessione fa da riferimento se non c'è baseline
+  const idx=vocalIndex(m,B);
+  if(SBOK && PID){
+    try{
+      await sb.from('voice_windows').insert({patient_id:PID, duration_s:spanS,
+        voiced_ratio:+m.voicedRatio.toFixed(3), f0_mean:+m.f0Mean.toFixed(1), f0_sd:+m.f0Sd.toFixed(1),
+        hnr_mean:+m.hnr.toFixed(2), jitter_pct:+m.jitter.toFixed(2), shimmer_pct:+m.shimmer.toFixed(2),
+        pause_ratio:+m.pauseRatio.toFixed(1), intensity_mean:+m.intMean.toFixed(4),
+        intensity_slope:+m.intSlope.toFixed(2), speech_rate:+m.speechRate.toFixed(2),
+        vocal_index:idx, is_baseline:false, source:'mic'});
+      lis.winSent++;
+      if(idx!=null) maybeVoiceAlert(idx);
+    }catch(e){ console.warn('voice_windows',e); }
+  } else lis.winSent++;
+}
+async function maybeVoiceAlert(idx){
+  const level=idx>=85?'alert':idx>=70?'warn':null;
+  if(!level) return;
+  const key='mg_alert_voce_'+todayISO()+'_'+level;
+  if(localStorage.getItem(key)) return;
+  localStorage.setItem(key,'1');
+  try{ await sb.from('alerts').insert({patient_id:PID, level, source:'voce', value:idx,
+        message:(level==='alert'?'Indice vocale marcatamente sopra il baseline ('+idx+'/100).':'Indice vocale sopra il baseline ('+idx+'/100): da osservare nei prossimi giorni.')});
+  }catch(_){}
+}
+function freeMic(){
+  if(lis.raf){ clearInterval(lis.raf); lis.raf=null; }
+  if(lis.stream){ lis.stream.getTracks().forEach(t=>t.stop()); lis.stream=null; }
+  if(lis.actx){ lis.actx.close().catch(()=>{}); lis.actx=null; }
+  try{ lis.wake?.release(); }catch(_){ } lis.wake=null;
+  const dot=document.getElementById('lisDot'); if(dot) dot.classList.remove('on');
+}
+function lisStop(){
+  if(lis.raf){ clearInterval(lis.raf); lis.raf=null; }
+  // finestra parziale: salvata solo se è durata abbastanza da avere senso
+  const part=(performance.now()-lis.winT0)/1000;
+  if(!lis.baselineMode && part>=12) finalizeWindow(Math.round(part));
+  freeMic();
+  lis.phase='idle'; lis.baselineMode=false;
+  render(); refreshData();
+}
+async function baselineStop(completed){
+  if(lis.raf){ clearInterval(lis.raf); lis.raf=null; }
+  // salva l'ultima finestra parziale se contiene voce sufficiente
+  const part=(performance.now()-lis.winT0)/1000;
+  if(part>=6) await finalizeWindow(Math.round(part));
+  freeMic();
+  lis.phase='idle'; lis.baselineMode=false;
+  const enough=lis.baseWin>=2 || lis.baseVoiced>=lis.baseTarget*0.6;
+  if(SBOK && PID && enough){
+    lis.baseline=await loadBaseline();   // d'ora in poi l'indice è calcolato su questo riferimento
+    try{
+      await sb.from('alerts').insert({patient_id:PID, level:'warn', source:'baseline',
+        message:'Nuovo stato basale fissato dal paziente ("al meglio"): '+lis.baseWin+' finestre, '+Math.round(lis.baseVoiced)+'s di voce. L\u2019indice riparte da questo riferimento.'});
+    }catch(_){}
+    localStorage.setItem('mg_baseline_set', todayISO());
+    toast('Stato basale registrato ✓');
+  }else if(!enough){
+    toast(SBOK?'Troppa poca voce: riprova parlando più a lungo':'Serve il backend per salvare il baseline');
+  }else{
+    toast('Stato basale registrato sul dispositivo');
+  }
+  setTab('ascolto'); refreshData();
+}
+function updateLisLive(){
+  const el=document.getElementById('lisLive'); if(!el) return;
+  // anelli del pendente: seguono il livello con tre inerzie diverse
+  lis.smooth[0]+= (lis.level-lis.smooth[0])*0.5;
+  lis.smooth[1]+= (lis.level-lis.smooth[1])*0.22;
+  lis.smooth[2]+= (lis.level-lis.smooth[2])*0.1;
+  const rws=el.querySelectorAll('.rw');
+  rws.forEach((r,i)=>{ r.style.transform='scale('+(1+lis.smooth[i]/100*0.16*(3-i)).toFixed(3)+')'; });
+  let lastV=null;
+  for(let i=lis.frames.length-1;i>=0;i--){ if(lis.frames[i].voiced){lastV=lis.frames[i];break;} }
+  const set=(id,v)=>{const x=el.querySelector(id); if(x)x.textContent=v;};
+  set('#lvF0', lastV?Math.round(lastV.f0)+' Hz':'—');
+  set('#lvHNR', lastV?lastV.hnr.toFixed(1)+' dB':'—');
+  const vr=lis.frames.length?Math.round(lis.frames.filter(f=>f.voiced).length/lis.frames.length*100):0;
+  set('#lvVoice', vr+'%');
+  const winS=(typeof MG_CONFIG!=='undefined'?MG_CONFIG.WINDOW_SECONDS:30);
+  const wp=Math.min(100,(performance.now()-lis.winT0)/1000/winS*100);
+  const bar=el.querySelector('#winBar'); if(bar) bar.style.width=wp+'%';
+  set('#lvSent', lis.winSent);
+  set('#lvMin', (lis.secToday/60).toFixed(1)+' min');
+}
+function updateBaseLive(){
+  const el=document.getElementById('baseLive'); if(!el) return;
+  lis.smooth[0]+= (lis.level-lis.smooth[0])*0.5;
+  lis.smooth[1]+= (lis.level-lis.smooth[1])*0.22;
+  lis.smooth[2]+= (lis.level-lis.smooth[2])*0.1;
+  el.querySelectorAll('.rw').forEach((r,i)=>{ r.style.transform='scale('+(1+lis.smooth[i]/100*0.16*(3-i)).toFixed(3)+')'; });
+  const set=(id,v)=>{const x=el.querySelector(id); if(x)x.textContent=v;};
+  const pct=Math.min(100, lis.baseVoiced/lis.baseTarget*100);
+  const bar=el.querySelector('#baseBar'); if(bar) bar.style.width=pct+'%';
+  set('#baseSec', Math.round(lis.baseVoiced)+'s / '+lis.baseTarget+'s di voce');
+  let lastV=null;
+  for(let i=lis.frames.length-1;i>=0;i--){ if(lis.frames[i].voiced){lastV=lis.frames[i];break;} }
+  const speaking=lis.level>4;
+  const st=el.querySelector('#baseHint');
+  if(st) st.textContent = speaking ? 'ti sto ascoltando… continua a parlare' : 'parla con la tua voce normale: leggi qualcosa o racconta la giornata';
+}
+
+/* ============================================================
+   CHECK-IN — domande informali a voce → MG-ADL via Claude API
+   La trascrizione avviene con la Web Speech API del browser;
+   il punteggio viene calcolato dalla Edge Function `score-scale`.
+   ============================================================ */
+const CHK_Q=[
+  {key:'parola',       q:'Buongiorno! Partiamo dalla voce: in questo momento la senti chiara come sempre, o un po\u2019 impastata o nasale? Ti capita spesso?'},
+  {key:'masticazione', q:'Pensando all\u2019ultimo pasto: masticare ti ha stancato? Succede anche con i cibi morbidi?'},
+  {key:'deglutizione', q:'Ti \u00e8 andato qualcosa di traverso di recente, o hai dovuto cambiare come prepari il cibo per mandarlo gi\u00f9?'},
+  {key:'respirazione', q:'Come va il fiato in questi giorni? Ti manca solo sotto sforzo, oppure anche da fermo?'},
+  {key:'igiene',       q:'Stamattina, lavarti i denti o pettinarti: ce l\u2019hai fatta tutto di fila o ti sei dovuto fermare a riposare le braccia?'},
+  {key:'alzarsi',      q:'Quando ti alzi da una sedia, ti aiuti con le braccia? Sempre, ogni tanto o mai?'},
+  {key:'diplopia',     q:'Oggi ti \u00e8 capitato di vedere doppio? Nelle ultime giornate quanto spesso succede?'},
+  {key:'ptosi',        q:'Ultima cosa: le palpebre. Le senti pesanti o cadenti? Sempre, o solo in certi momenti della giornata?'},
+];
+const ITEM_LABEL={parola:'Linguaggio',masticazione:'Masticazione',deglutizione:'Deglutizione',
+  respirazione:'Respirazione',igiene:'Lavarsi i denti / pettinarsi',alzarsi:'Alzarsi da una sedia',
+  diplopia:'Visione doppia',ptosi:'Palpebre cadenti'};
+
+const chk={step:-1, answers:[], listening:false, live:'', rec:null,
+  sending:false, result:null, error:null, beforeMeds:true};
+
+function chkBegin(){
+  stopAllTests();
+  Object.assign(chk,{step:0,answers:CHK_Q.map(()=>''),listening:false,live:'',sending:false,result:null,error:null});
+  chk.beforeMeds = SET.meds_time ? nowHM() < SET.meds_time : true;
+  render({top:true});
+  speakQ();
+}
+/* ============================================================
+   MGVoice — voce unificata
+     • SET.voiceMode = 'system'  -> sintesi del dispositivo (gratis, peso zero, offline)
+     • SET.voiceMode = 'kokoro'  -> modello neurale on-device Kokoro (im_nicola, ~82 MB)
+   Il resto dell'app usa solo MGVoice.speak()/cancel(): non sa quale motore è attivo.
+   In 'kokoro', finché il modello non è pronto si parla con la voce di sistema, così
+   l'assistente non resta muto durante il download; ogni errore ricade sul sistema.
+   ============================================================ */
+const MGVoice = (function(){
+  /* ---------- livello 1: voce di sistema ---------- */
+  const SYS_RATE=0.97, SYS_PITCH=0.96;     // un filo più calda/profonda
+  const MALE_HINTS=['diego','giuseppe','calogero','cosimo','luca','giorgio','marco','carlo','paolo','nicola','gianni','roberto','federico'];
+  const QUALITY_HINTS=['natural','neural','enhanced','premium','online','siri'];
+  function italianVoices(){
+    try{ return (speechSynthesis.getVoices()||[]).filter(v=>/^it(-|_|$)/i.test(v.lang||'')); }catch(_){ return []; }
+  }
+  function pickVoice(){
+    const it=italianVoices(); if(!it.length) return null;
+    const score=v=>{ const n=(v.name||'').toLowerCase(); let s=0;
+      if(MALE_HINTS.some(h=>n.includes(h))) s+=4;
+      if(QUALITY_HINTS.some(h=>n.includes(h))) s+=2;
+      if(/it[-_]IT/i.test(v.lang||'')) s+=1; return s; };
+    return it.slice().sort((a,b)=>score(b)-score(a))[0];
+  }
+  function sysSpeak(text,onend){
+    try{
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang='it-IT'; u.rate=SYS_RATE; u.pitch=SYS_PITCH;
+      const v=pickVoice(); if(v) u.voice=v;
+      if(onend){ u.onend=u.onerror=()=>{ try{onend();}catch(_){} }; }
+      speechSynthesis.speak(u); return true;
+    }catch(_){ if(onend) setTimeout(onend,60); return false; }
+  }
+  try{ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>{ try{speechSynthesis.getVoices();}catch(_){} }; } }catch(_){}
+
+  /* ---------- livello 2: Kokoro on-device ---------- */
+  const KOKORO_LIB='https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
+  const KOKORO_MODEL='onnx-community/Kokoro-82M-v1.0-ONNX';
+  const KOKORO_VOICE='im_nicola';            // italiano maschile
+  let kSt='idle';                            // idle | loading | ready | failed
+  let kTTS=null, kLoading=null, kQueue=[], kBusy=false, kAudio=null;
+  const hasWebGPU=()=> typeof navigator!=='undefined' && !!navigator.gpu;
+  function floatToWav(samples,sr){
+    const n=samples.length, buf=new ArrayBuffer(44+n*2), dv=new DataView(buf);
+    const wr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
+    wr(0,'RIFF'); dv.setUint32(4,36+n*2,true); wr(8,'WAVE'); wr(12,'fmt ');
+    dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,1,true);
+    dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true); dv.setUint16(32,2,true); dv.setUint16(34,16,true);
+    wr(36,'data'); dv.setUint32(40,n*2,true);
+    let o=44; for(let i=0;i<n;i++){ const s=Math.max(-1,Math.min(1,samples[i])); dv.setInt16(o,s<0?s*0x8000:s*0x7FFF,true); o+=2; }
+    return new Blob([buf],{type:'audio/wav'});
+  }
+  function ensureKokoro(){
+    if(kSt==='ready') return Promise.resolve(kTTS);
+    if(kLoading) return kLoading;
+    kSt='loading';
+    if(typeof toast==='function') toast('Voce naturale: scarico il modello (~82 MB, una volta sola)…');
+    kLoading=(async()=>{
+      const mod=await import(KOKORO_LIB);
+      const KokoroTTS=mod.KokoroTTS||(mod.default&&mod.default.KokoroTTS);
+      if(!KokoroTTS) throw new Error('kokoro-js non disponibile');
+      const load=(device)=>KokoroTTS.from_pretrained(KOKORO_MODEL,{dtype:'q8',device});
+      try{ kTTS=await load(hasWebGPU()?'webgpu':'wasm'); }
+      catch(_){ kTTS=await load('wasm'); }   // ripiego su WASM se WebGPU non parte
+      kSt='ready';
+      if(typeof toast==='function') toast('Voce naturale pronta');
+      return kTTS;
+    })();
+    kLoading.catch(()=>{ kSt='failed'; kLoading=null; if(typeof toast==='function') toast('Voce naturale non disponibile: uso la voce di sistema'); });
+    return kLoading;
+  }
+  async function kProcess(){
+    if(kBusy) return;
+    const item=kQueue.shift(); if(!item) return;
+    kBusy=true;
+    try{
+      const out=await kTTS.generate(item.text,{voice:KOKORO_VOICE});
+      let blob;
+      if(out && typeof out.toBlob==='function') blob=out.toBlob();
+      else blob=floatToWav(out.audio||out.waveform||[], out.sampling_rate||out.sampleRate||24000);
+      const url=URL.createObjectURL(blob);
+      kAudio=new Audio(url);
+      kAudio.onended=kAudio.onerror=()=>{ try{URL.revokeObjectURL(url);}catch(_){} kAudio=null; kBusy=false; try{item.onend&&item.onend();}catch(_){} kProcess(); };
+      await kAudio.play().catch(()=>{ if(kAudio&&kAudio.onended) kAudio.onended(); });
+    }catch(_){
+      kBusy=false;
+      sysSpeak(item.text, ()=>{ try{item.onend&&item.onend();}catch(_){} kProcess(); });  // fallback per questo pezzo
+    }
+  }
+  function kCancel(){
+    kQueue=[];
+    if(kAudio){ try{kAudio.pause();}catch(_){} try{kAudio.src='';}catch(_){} kAudio=null; }
+    kBusy=false;
+  }
+
+  /* ---------- API unificata ---------- */
+  function speak(text,opts){
+    opts=opts||{};
+    if(!text || !SET.tts){ if(opts.onend) setTimeout(opts.onend,40); return; }
+    if(opts.cancelFirst) cancel();
+    if(SET.voiceMode==='kokoro'){
+      if(kSt==='ready'){ kQueue.push({text,onend:opts.onend}); kProcess(); return; }
+      ensureKokoro();                       // avvia/continua il download
+      sysSpeak(text,opts.onend);            // intanto parla la voce di sistema
+      return;
+    }
+    sysSpeak(text,opts.onend);
+  }
+  function cancel(){
+    try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(_){}
+    kCancel();
+  }
+  function prepare(){ if(SET.voiceMode==='kokoro') ensureKokoro(); }   // front-load del modello
+  return { speak, cancel, prepare, pickVoice, get state(){ return kSt; } };
+})();
+
+function speakQ(){
+  if(chk.step<0 || chk.step>=CHK_Q.length) return;
+  MGVoice.speak(CHK_Q[chk.step].q, {cancelFirst:true});
+}
+function sttSupported(){ return !!(window.SpeechRecognition||window.webkitSpeechRecognition); }
+function chkMic(){
+  if(chk.listening){ try{chk.rec&&chk.rec.stop();}catch(_){ } return; }
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ toast('Dettatura non supportata qui: scrivi la risposta'); return; }
+  try{ MGVoice.cancel(); }catch(_){}
+  const rec=new SR();
+  rec.lang='it-IT'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+  let finalTxt=chk.answers[chk.step]?chk.answers[chk.step]+' ':'';
+  rec.onresult=e=>{
+    let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const t=e.results[i][0].transcript;
+      if(e.results[i].isFinal) finalTxt+=t; else interim+=t;
+    }
+    chk.live=interim;
+    const ta=document.getElementById('chkAns');
+    if(ta) ta.value=(finalTxt+interim).trim();
+  };
+  rec.onend=()=>{
+    chk.listening=false; chk.live='';
+    chk.answers[chk.step]=(document.getElementById('chkAns')?.value||finalTxt).trim();
+    render();
+  };
+  rec.onerror=e=>{ chk.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
+  chk.rec=rec; chk.listening=true; render();
+  try{ rec.start(); }catch(_){ chk.listening=false; render(); }
+}
+function chkSaveTyped(){
+  const ta=document.getElementById('chkAns');
+  if(ta) chk.answers[chk.step]=ta.value.trim();
+}
+function chkNext(d){
+  chkSaveTyped();
+  try{ chk.rec&&chk.rec.stop(); }catch(_){}
+  chk.step=Math.max(0,Math.min(CHK_Q.length, chk.step+d));
+  render({top:true});
+  if(chk.step<CHK_Q.length) speakQ();
+}
+async function chkSubmit(){
+  chkSaveTyped();
+  if(!SBOK){ chk.error='App non collegata a Supabase: compila config.js (vedi SETUP.md).'; render(); return; }
+  chk.sending=true; chk.error=null; render();
+  try{
+    const qa=CHK_Q.map((x,i)=>({q:x.q, a:chk.answers[i]||''}));
+    const resp=await fetch(MG_CONFIG.SUPABASE_URL+'/functions/v1/score-scale',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':MG_CONFIG.SUPABASE_ANON_KEY,
+               'Authorization':'Bearer '+MG_CONFIG.SUPABASE_ANON_KEY},
+      body:JSON.stringify({patient_code:SET.code, scale_type:'MG-ADL', before_meds:chk.beforeMeds, qa})
+    });
+    const data=await resp.json().catch(()=>({}));
+    if(!resp.ok || !data.ok) throw new Error(data.error||('HTTP '+resp.status));
+    chk.result=data;
+    refreshData();
+  }catch(e){ chk.error=String(e.message||e); }
+  chk.sending=false; render({top:true});
+}
+function chkClose(){
+  const wasBeforeMeds=chk.beforeMeds!==false;
+  chk.step=-1; chk.result=null;
+  currentTab='horus';
+  // nudge: dopo il check-in del mattino, se c'è terapia da prendere, Horus lo segnala
+  if(chat.opened && wasBeforeMeds && STATE.today.checkin && pendingMorningMeds().length){
+    pushBot('Ottimo, check-in fatto! ✓ Ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?');
+  }
+  render({top:true});
+}
+
+/* ============================================================
+   TEST OPZIONALI — ptosi, conta in un respiro, arm drift
+   Moduli portati da MG-Sense; al termine il risultato viene
+   salvato in `test_results` (e genera un alert se marcato).
+   ============================================================ */
+let testView='menu';   // 'menu' | 'ptosi' | 'conta' | 'armdrift'
+let pendingExtra=null; // risultato di un test già fatto oggi, in attesa di conferma di salvataggio
+let medsEdit=false;    // editor del piano terapeutico (mostrato solo su "Modifica terapia")
+function openTest(t){ testView=t; render({top:true}); }
+function closeTest(){ stopAllTests(); testView='menu'; render({top:true}); }
+function stopAllTests(){
+  if(eyeTest.phase==='running') eyeStop(true);
+  if(sbcTest.phase==='running') sbcStop(true);
+  if(armDrift.phase==='running'||armDrift.phase==='align') armStop(true);
+}
+function pauseCollana(){
+  if(lis.phase==='running'){ lisStop(); toast('Collana in pausa: il microfono serve al test'); }
+}
+async function saveTestResult(type, metrics, tone, alertTxt){
+  if(!SBOK || !PID) return false;
+  // se il test di oggi è già stato registrato, questo è un "extra": chiedi conferma
+  if(STATE.today.tests[type]){
+    pendingExtra={type, metrics, tone, alertTxt};
+    render();
+    return false;
+  }
+  return await reallySaveTest(type, metrics, tone, alertTxt);
+}
+async function reallySaveTest(type, metrics, tone, alertTxt){
+  if(!SBOK || !PID) return false;
+  try{
+    await sb.from('test_results').insert({patient_id:PID, test_type:type, metrics});
+    if(tone==='alert'){
+      const key='mg_alert_'+type+'_'+todayISO();
+      if(!localStorage.getItem(key)){
+        localStorage.setItem(key,'1');
+        await sb.from('alerts').insert({patient_id:PID, level:'alert', source:type, message:alertTxt||('Test '+type+' alterato.')});
       }
-      return clients.openWindow(target);
-    })
-  );
-});
+    }
+    refreshData();
+    return true;
+  }catch(e){ console.warn('saveTestResult',e); return false; }
+}
+async function confirmSaveExtra(){
+  const p=pendingExtra; pendingExtra=null;
+  if(p){ const ok=await reallySaveTest(p.type,p.metrics,p.tone,p.alertTxt); toast(ok?'Misura extra salvata ✓':'Salvataggio non riuscito'); }
+  render();
+}
+function discardExtra(){ pendingExtra=null; toast('Misura extra non salvata'); render(); }
+function extraBanner(type){
+  if(!pendingExtra || pendingExtra.type!==type) return '';
+  const L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
+  return '<div class="card" style="margin-top:12px;background:var(--warnSoft);box-shadow:none;padding:13px 15px;">'+
+    '<div style="font-size:13px;color:var(--warn);line-height:1.5;">Hai già registrato il test '+(L[type]||type)+' oggi. Vuoi salvare anche questa misura <b>extra</b>?</div>'+
+    '<div style="display:flex;gap:8px;margin-top:10px;">'+
+      '<button class="btn small primary" onclick="confirmSaveExtra()">Salva</button>'+
+      '<button class="btn small" onclick="discardExtra()">Scarta</button>'+
+    '</div></div>';
+}
+function mediaNote(kind){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return '<div style="margin-top:10px;font-size:12px;color:var(--warn);line-height:1.5;">⚠ '+kind+' non accessibile in questo contesto (es. pagina aperta da <b>file://</b>): per la misura reale servi la pagina via <b>https</b>. In assenza parte una <b>demo simulata</b>.</div>';
+  return '<div style="margin-top:10px;font-size:12px;color:var(--inkSoft);">Alla prima esecuzione il browser chiederà l\u2019accesso al sensore: tocca <b>Consenti</b>. Se negato, parte una demo simulata.</div>';
+}
+
+/* ---------------- PTOSI — MediaPipe Face Landmarker ---------------- */
+const FACE_WASM ='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/wasm';
+const FACE_LIB  ='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/+esm';
+const FACE_MODEL='https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+let faceLM=null, faceLMLoading=null;
+async function ensureFaceLandmarker(){
+  if(faceLM) return faceLM;
+  if(faceLMLoading) return faceLMLoading;
+  faceLMLoading=(async()=>{
+    const vision=await import(FACE_LIB);
+    const {FaceLandmarker,FilesetResolver}=vision;
+    const fileset=await FilesetResolver.forVisionTasks(FACE_WASM);
+    const opts=(delegate)=>({baseOptions:{modelAssetPath:FACE_MODEL,delegate},
+      runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:false,outputFacialTransformationMatrixes:false});
+    try{ faceLM=await FaceLandmarker.createFromOptions(fileset,opts('GPU')); }
+    catch(_){ faceLM=await FaceLandmarker.createFromOptions(fileset,opts('CPU')); }
+    return faceLM;
+  })();
+  try{ return await faceLMLoading; }
+  catch(e){ faceLMLoading=null; throw e; }
+}
+const EYE={
+  R:{ outer:33,  inner:133, upper:159, lower:145, vt:[[160,144],[158,153]], irisC:468, irisH:[469,471] },
+  L:{ inner:362, outer:263, upper:386, lower:374, vt:[[385,380],[387,373]], irisC:473, irisH:[474,476] },
+};
+function P(lm,i,vw,vh){ const p=lm[i]; return [p.x*vw, p.y*vh]; }
+function D(a,b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function earEye(lm,e,vw,vh){
+  const wdt=D(P(lm,e.outer,vw,vh), P(lm,e.inner,vw,vh));
+  let v=0; for(const [a,b] of e.vt) v+=D(P(lm,a,vw,vh), P(lm,b,vw,vh));
+  v/=e.vt.length;
+  return wdt>0 ? v/wdt : 0;
+}
+function analyzeEyeFrame(lm,vw,vh){
+  const earR=earEye(lm,EYE.R,vw,vh), earL=earEye(lm,EYE.L,vw,vh);
+  const ear=(earR+earL)/2;
+  const irisR=D(P(lm,EYE.R.irisH[0],vw,vh),P(lm,EYE.R.irisH[1],vw,vh));
+  const irisL=D(P(lm,EYE.L.irisH[0],vw,vh),P(lm,EYE.L.irisH[1],vw,vh));
+  const irisPx=(irisR+irisL)/2;
+  const mmPerPx=irisPx>0 ? 11.7/irisPx : 0;
+  const pfhR=D(P(lm,EYE.R.upper,vw,vh),P(lm,EYE.R.lower,vw,vh));
+  const pfhL=D(P(lm,EYE.L.upper,vw,vh),P(lm,EYE.L.lower,vw,vh));
+  const pfhMm=((pfhR+pfhL)/2)*mmPerPx;
+  const mrdR=(P(lm,EYE.R.irisC,vw,vh)[1]-P(lm,EYE.R.upper,vw,vh)[1])*mmPerPx;
+  const mrdL=(P(lm,EYE.L.irisC,vw,vh)[1]-P(lm,EYE.L.upper,vw,vh)[1])*mmPerPx;
+  const mrdMm=(mrdR+mrdL)/2;
+  const gz=(e)=>{const up=P(lm,e.upper,vw,vh)[1],lo=P(lm,e.lower,vw,vh)[1],c=P(lm,e.irisC,vw,vh)[1];const s=lo-up;return s>1?(c-up)/s:0.5;};
+  const gaze=(gz(EYE.R)+gz(EYE.L))/2;
+  return {ok:true, ear, earR, earL, pfhMm, mrdMm, irisPx, gaze, gazeUp:gaze<0.42, asym:Math.abs(earR-earL)};
+}
+/* ---- overlay live dei landmark dell'occhio (come riconosce il modello) ---- */
+let eyeOverlayOn=true;
+const EYE_RING_R=[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
+const EYE_RING_L=[362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
+function toggleEyeOverlay(){
+  eyeOverlayOn=!eyeOverlayOn;
+  const cv=document.getElementById('eyeOverlay');
+  if(cv){ cv.style.display=eyeOverlayOn?'block':'none'; if(!eyeOverlayOn){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); } }
+  const b=document.getElementById('eyeOverlayBtn'); if(b) b.textContent=eyeOverlayOn?'Nascondi punti':'Mostra punti';
+}
+function drawEyeOverlay(lm,vw,vh){
+  const cv=document.getElementById('eyeOverlay');
+  if(!cv || !eyeOverlayOn) return;
+  if(cv.width!==vw || cv.height!==vh){ cv.width=vw; cv.height=vh; }
+  const ctx=cv.getContext('2d'); ctx.clearRect(0,0,vw,vh);
+  if(!lm) return;
+  const px=i=>{ const p=lm[i]; return [p.x*vw, p.y*vh]; };
+  const earNow=(earEye(lm,EYE.R,vw,vh)+earEye(lm,EYE.L,vw,vh))/2;
+  const blink=earNow<0.15, ring=blink?'#FF5A47':'#39E0A8', w=Math.max(1.6,vw/300);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.lineWidth=w; ctx.strokeStyle=ring;
+  for(const R of [EYE_RING_R,EYE_RING_L]){ ctx.beginPath(); R.forEach((i,k)=>{ const [x,y]=px(i); k?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.closePath(); ctx.stroke(); }
+  ctx.strokeStyle=blink?'#FFB199':'#7FD7FF';
+  for(const [c,a,b] of [[468,469,471],[473,474,476]]){ const C0=px(c),A=px(a),B=px(b),r=Math.hypot(A[0]-B[0],A[1]-B[1])/2; ctx.beginPath(); ctx.arc(C0[0],C0[1],r,0,Math.PI*2); ctx.stroke(); ctx.fillStyle=ring; ctx.beginPath(); ctx.arc(C0[0],C0[1],w*1.1,0,Math.PI*2); ctx.fill(); }
+  ctx.strokeStyle='#FFD86B'; ctx.lineWidth=Math.max(1.1,vw/420);
+  for(const e of [EYE.R,EYE.L]){ for(const [a,b] of e.vt){ const A=px(a),B=px(b); ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke(); } const O=px(e.outer),I=px(e.inner); ctx.beginPath(); ctx.moveTo(O[0],O[1]); ctx.lineTo(I[0],I[1]); ctx.stroke(); }
+}
+const eyeTest={phase:'idle',source:null,duration:60,stream:null,frames:[],gotFrames:0,
+  t0:0,raf:null,lastVideoTime:-1,modelReady:false,status:'',saved:false};
+function computeEyeBiomarkers(){
+  const all=eyeTest.frames.filter(f=>f.ok);
+  const F=all.filter(f=>!f.blink);
+  if(F.length<10) return {ok:false, faceFrac: all.length? all.length/eyeTest.frames.length : 0};
+  const mean=(arr,k)=>arr.reduce((s,f)=>s+f[k],0)/arr.length;
+  const n=Math.max(6, Math.round(F.length*0.15));
+  const base=F.slice(0,n), end=F.slice(-n);
+  const baseEAR=mean(base,'ear'), endEAR=mean(end,'ear');
+  const basePFH=mean(base,'pfhMm'), endPFH=mean(end,'pfhMm');
+  const endMRD=mean(end,'mrdMm');
+  const declEAR=baseEAR>0?(baseEAR-endEAR)/baseEAR*100:0;
+  const declPFH=basePFH>0?(basePFH-endPFH)/basePFH*100:0;
+  const minPFH=Math.min(...F.map(f=>f.pfhMm));
+  const asym=mean(F,'asym');
+  let blinks=0; for(let i=1;i<all.length;i++){ if(all[i].blink && !all[i-1].blink) blinks++; }
+  const dur=all.length?all[all.length-1].t:0;
+  const upFrac=all.length? all.filter(f=>f.gazeUp).length/all.length : 0;
+  return {ok:true, baseEAR, endEAR, basePFH, endPFH, endMRD, declEAR, declPFH,
+          minPFH, asym, blinks, upFrac, dur, earContour:F.map(f=>f.ear)};
+}
+function eyeInterpretBio(m){
+  if(!m.ok) return {tone:'warn', txt:'Volto non rilevato a sufficienza: avvicina il viso, illumina la stanza e tieni il telefono fermo all\u2019altezza degli occhi, poi ripeti.'};
+  if(m.upFrac<0.4) return {tone:'warn', txt:'Sguardo non mantenuto verso l\u2019alto per gran parte del test: ripeti fissando il punto in cima allo schermo, così la manovra provoca davvero la ptosi affaticabile.'};
+  const flags=[];
+  if(m.declPFH>=20 || m.declEAR>=20) flags.push('apertura in calo durante lo sguardo in alto');
+  if(m.endPFH>0 && m.endPFH<6) flags.push('rima palpebrale ridotta a fine test');
+  if(m.asym>=0.06) flags.push('asimmetria tra i due occhi');
+  const strong=(m.declPFH>=35)||(m.declEAR>=35)||(m.endPFH>0 && m.endPFH<4.5);
+  let tone='ok', txt='Apertura palpebrale stabile durante lo sguardo prolungato in alto: nessuna ptosi affaticabile significativa.';
+  if(strong){ tone='alert'; txt='Calo marcato e progressivo dell\u2019apertura palpebrale ('+flags.join(', ')+'): ptosi affaticabile evidente, da segnalare al centro di riferimento.'; }
+  else if(flags.length){ tone='warn'; txt='Riduzione moderata dell\u2019apertura ('+flags.join(', ')+'): lieve ptosi affaticabile da monitorare nei prossimi giorni.'; }
+  return {tone,txt};
+}
+function eyeTick(){
+  if(eyeTest.phase!=='running') return;
+  const v=document.getElementById('eyeVideo');
+  const elapsed=(performance.now()-eyeTest.t0)/1000;
+  if(v && v.readyState>=2 && v.videoWidth>0 && eyeTest.modelReady && faceLM){
+    if(v.currentTime!==eyeTest.lastVideoTime){
+      eyeTest.lastVideoTime=v.currentTime;
+      let res=null;
+      try{ res=faceLM.detectForVideo(v, performance.now()); }catch(_){}
+      if(res && res.faceLandmarks && res.faceLandmarks.length){
+        const a=analyzeEyeFrame(res.faceLandmarks[0], v.videoWidth, v.videoHeight);
+        a.blink=a.ear<0.15; a.t=elapsed;
+        eyeTest.frames.push(a); eyeTest.gotFrames++;
+        drawEyeOverlay(res.faceLandmarks[0], v.videoWidth, v.videoHeight);
+      }else{
+        eyeTest.frames.push({ok:false,t:elapsed,ear:0,pfhMm:0,mrdMm:0,gaze:0.5,gazeUp:false,asym:0,blink:false});
+        drawEyeOverlay(null, v.videoWidth, v.videoHeight);
+      }
+    }
+  }
+  if(elapsed>=eyeTest.duration){ eyeStop(); return; }
+  updateEyeLive(elapsed);
+}
+function eyeTickSim(){
+  if(eyeTest.phase!=='running') return;
+  const elapsed=(performance.now()-eyeTest.t0)/1000, frac=elapsed/eyeTest.duration;
+  const blink=Math.sin(elapsed*2.1)>0.985;
+  let ear,pfh,mrd;
+  if(blink){ ear=0.07; pfh=1.5; mrd=0.2; }
+  else{
+    ear=Math.max(0.12, 0.33-0.16*Math.pow(frac,1.3)+(Math.random()-0.5)*0.015);
+    pfh=Math.max(3.5, 9.2-4.2*Math.pow(frac,1.3)+(Math.random()-0.5)*0.3);
+    mrd=Math.max(0.5, 3.6-2.4*Math.pow(frac,1.3)+(Math.random()-0.5)*0.2);
+  }
+  eyeTest.frames.push({ok:true,ear,earR:ear,earL:ear*0.96,pfhMm:pfh,mrdMm:mrd,irisPx:60,gaze:0.3,gazeUp:true,asym:ear*0.04,blink,t:elapsed});
+  if(elapsed>=eyeTest.duration){ eyeStop(); return; }
+  updateEyeLive(elapsed);
+}
+function updateEyeLive(elapsed){
+  const el=document.getElementById('eyeLive'); if(!el) return;
+  const F=eyeTest.frames.filter(f=>f.ok && !f.blink);
+  const last=F.length?F[F.length-1]:null;
+  const set=(id,val)=>{const x=el.querySelector(id); if(x)x.textContent=val;};
+  set('#eyeTime', elapsed.toFixed(0)+'s / '+eyeTest.duration+'s');
+  const bar=el.querySelector('#eyeBar'); if(bar) bar.style.width=Math.min(100,elapsed/eyeTest.duration*100)+'%';
+  set('#eyeEAR', last?last.ear.toFixed(2):'—');
+  set('#eyePFH', last?last.pfhMm.toFixed(1)+' mm':'—');
+  const st=el.querySelector('#eyeStatus');
+  if(st) st.textContent = eyeTest.source==='sim' ? 'demo simulata'
+    : !eyeTest.modelReady ? (eyeTest.status||'caricamento modello…')
+    : (F.length>0 ? 'volto rilevato · '+F.length+' frame' : 'inquadra il viso e guarda il punto in alto…');
+  const sl=el.querySelector('#eyeSpark');
+  if(sl && F.length>1){ const c=F.map(f=>f.ear); sl.innerHTML=spark(c, c[0], C.primary, 50, 300); }
+}
+function eyeFreeHW(){
+  if(eyeTest.raf){ clearInterval(eyeTest.raf); eyeTest.raf=null; }
+  if(eyeTest.stream){ eyeTest.stream.getTracks().forEach(t=>t.stop()); eyeTest.stream=null; }
+}
+/* porta una card (es. il box del test) ad allinearsi appena sotto la topbar,
+   così il punto da fissare per la ptosi sale in alto sullo schermo */
+function scrollScreenToCard(id){
+  requestAnimationFrame(()=>{
+    const screen=document.getElementById('screen'), card=document.getElementById(id);
+    if(!screen||!card) return;
+    const s=screen.getBoundingClientRect(), c=card.getBoundingClientRect();
+    screen.scrollTop += (c.top - s.top);
+  });
+}
+async function eyeStart(){
+  Object.assign(eyeTest,{phase:'running',source:null,frames:[],gotFrames:0,saved:false,
+    t0:performance.now(),lastVideoTime:-1,modelReady:false,status:'caricamento modello…'});
+  render({top:true});   // box bianco in cima sotto la top bar (titolo/Salva-Scarta nascosti durante il test)
+  try{
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('no-media');
+    eyeTest.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    eyeTest.source='camera';
+    const v=document.getElementById('eyeVideo');
+    if(v){ v.srcObject=eyeTest.stream; await v.play().catch(()=>{}); }
+  }catch(_){
+    eyeTest.source='sim'; eyeTest.t0=performance.now();
+    eyeTest.raf=setInterval(eyeTickSim,80); render(); return;
+  }
+  try{
+    updateEyeLive(0);
+    await ensureFaceLandmarker();
+    eyeTest.modelReady=true;
+    eyeTest.t0=performance.now(); eyeTest.lastVideoTime=-1;
+    eyeTest.raf=setInterval(eyeTick,60);
+  }catch(e){
+    eyeFreeHW();
+    eyeTest.source='sim'; eyeTest.t0=performance.now();
+    eyeTest.raf=setInterval(eyeTickSim,80); render();
+  }
+}
+function eyeStop(abort){
+  eyeFreeHW();
+  eyeTest.phase=abort===true?'idle':'done';
+  if(eyeTest.phase==='done' && !eyeTest.saved){
+    eyeTest.saved=true;
+    const m=computeEyeBiomarkers(), r=eyeInterpretBio(m);
+    if(m.ok) saveTestResult('ptosi',{base_pfh:+m.basePFH.toFixed(1),end_pfh:+m.endPFH.toFixed(1),
+      decl_pfh_pct:+m.declPFH.toFixed(0), base_ear:+m.baseEAR.toFixed(2), end_ear:+m.endEAR.toFixed(2),
+      decl_ear_pct:+m.declEAR.toFixed(0), end_mrd:+m.endMRD.toFixed(1), blinks:m.blinks,
+      asym:+m.asym.toFixed(2), up_frac:+m.upFrac.toFixed(2), dur_s:+m.dur.toFixed(0),
+      source:eyeTest.source, tone:r.tone}, r.tone, r.txt);
+  }
+  render();
+}
+function eyeReset(){ eyeTest.phase='idle'; eyeTest.frames=[]; eyeTest.saved=false; render(); }
+
+/* ---------------- CONTA — single-breath count (microfono) ---------------- */
+const sbcTest={phase:'idle',source:null,maxDur:35,stream:null,actx:null,analyser:null,buf:null,
+  samples:[],level:0,started:false,phonation:0,startT:0,lastVoice:0,lastSample:0,t0:0,raf:null,saved:false};
+function sbcPush(l){
+  if(performance.now()-sbcTest.lastSample<200) return;
+  sbcTest.lastSample=performance.now();
+  sbcTest.samples.push(l);
+}
+function sbcCore(){
+  const now=performance.now(), elapsed=(now-sbcTest.t0)/1000;
+  if(sbcTest.level>6){
+    if(!sbcTest.started){ sbcTest.started=true; sbcTest.startT=now; }
+    sbcTest.lastVoice=now;
+  }
+  if(sbcTest.started){
+    sbcTest.phonation=(sbcTest.lastVoice-sbcTest.startT)/1000;
+    if(now-sbcTest.lastVoice>1500){ sbcStop(); return; }   // fine del respiro
+  }
+  sbcPush(sbcTest.level);
+  if(elapsed>=sbcTest.maxDur){ sbcStop(); return; }
+  sbcUpdate(elapsed);
+}
+function sbcTick(){
+  if(sbcTest.phase!=='running') return;
+  sbcTest.analyser.getByteTimeDomainData(sbcTest.buf);
+  let s=0;
+  for(let i=0;i<sbcTest.buf.length;i++){ const d=(sbcTest.buf[i]-128)/128; s+=d*d; }
+  sbcTest.level=Math.min(100,Math.sqrt(s/sbcTest.buf.length)*340);
+  sbcCore();
+}
+function sbcTickSim(){
+  if(sbcTest.phase!=='running') return;
+  const e=(performance.now()-sbcTest.t0)/1000;
+  sbcTest.level = e<1 ? 2 : (e<20.5 ? Math.max(2,(30+15*Math.abs(Math.sin(e*5.2)))*(1-e/40)+(Math.random()-0.5)*6) : 2);
+  sbcCore();
+}
+function sbcUpdate(elapsed){
+  const el=document.getElementById('sbcLive'); if(!el) return;
+  const set=(id,v)=>{const x=el.querySelector(id); if(x)x.textContent=v;};
+  set('#sbcTime', sbcTest.phonation.toFixed(1)+'s');
+  const b=el.querySelector('#sbcBar'); if(b) b.style.width=Math.min(100,elapsed/sbcTest.maxDur*100)+'%';
+  const vu=el.querySelector('#sbcVu'); if(vu) vu.style.width=Math.min(100,sbcTest.level)+'%';
+  const st=el.querySelector('#sbcStatus');
+  if(st) st.textContent=sbcTest.source==='sim' ? 'demo simulata'
+    : (sbcTest.started ? 'fonazione in corso… continua a contare' : 'fai un respiro profondo e inizia a contare');
+  const sl=el.querySelector('#sbcSpark');
+  if(sl && sbcTest.samples.length>1) sl.innerHTML=spark(sbcTest.samples,null,C.voice,50,300);
+}
+function sbcFreeHW(){
+  if(sbcTest.raf){ clearInterval(sbcTest.raf); sbcTest.raf=null; }
+  if(sbcTest.stream){ sbcTest.stream.getTracks().forEach(t=>t.stop()); sbcTest.stream=null; }
+  if(sbcTest.actx){ sbcTest.actx.close().catch(()=>{}); sbcTest.actx=null; }
+  sbcTest.analyser=null;
+}
+async function sbcStart(){
+  pauseCollana();
+  Object.assign(sbcTest,{phase:'running',source:null,samples:[],level:0,started:false,phonation:0,lastSample:0,saved:false,t0:performance.now()});
+  render();
+  try{
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('no-media');
+    sbcTest.stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    sbcTest.source='mic';
+    const AC=window.AudioContext||window.webkitAudioContext;
+    sbcTest.actx=new AC();
+    await sbcTest.actx.resume().catch(()=>{});
+    sbcTest.analyser=sbcTest.actx.createAnalyser();
+    sbcTest.analyser.fftSize=2048;
+    sbcTest.actx.createMediaStreamSource(sbcTest.stream).connect(sbcTest.analyser);
+    sbcTest.buf=new Uint8Array(sbcTest.analyser.fftSize);
+    sbcTest.t0=performance.now();
+    sbcTest.raf=setInterval(sbcTick,50);
+  }catch(_){
+    sbcTest.source='sim'; sbcTest.t0=performance.now();
+    sbcTest.raf=setInterval(sbcTickSim,50);
+  }
+}
+function sbcInterpret(){
+  const t=sbcTest.phonation, count=Math.round(t*1.8);
+  if(!sbcTest.started || t<2) return {tone:'warn',txt:'Voce non rilevata: ripeti in ambiente silenzioso, contando a voce normale verso il telefono.',count:0};
+  if(count>=40) return {tone:'ok',  txt:'Riserva respiratoria conservata: conteggio nella norma per il single-breath count.',count};
+  if(count>=25) return {tone:'warn',txt:'Conteggio ridotto: riserva respiratoria da monitorare, ripeti il test domani.',count};
+  return {tone:'alert',txt:'Conteggio molto ridotto: possibile compromissione respiratoria, contatta il centro di riferimento.',count};
+}
+function sbcStop(abort){
+  sbcFreeHW();
+  sbcTest.phase=abort===true?'idle':'done';
+  if(sbcTest.phase==='done' && !sbcTest.saved){
+    sbcTest.saved=true;
+    const r=sbcInterpret();
+    saveTestResult('conta',{phonation_s:+sbcTest.phonation.toFixed(1), count_est:r.count,
+      source:sbcTest.source, tone:r.tone}, r.tone, r.txt);
+  }
+  render();
+}
+function sbcReset(){ sbcTest.phase='idle'; sbcTest.samples=[]; sbcTest.saved=false; render(); }
+
+/* ---------------- ARM DRIFT — accelerometro / giroscopio ---------------- */
+const armDrift={phase:'idle',
+  supported:('DeviceOrientationEvent' in window)||('DeviceMotionEvent' in window),
+  source:null,gotSamples:0,startAngle:null,curAngle:null,samples:[],tremorBuf:[],tremor:0,
+  maxDrift:0,holdTime:0,duration:30,t0:0,raf:null,simTimer:null,lastAngle:0,lastSampleAt:0,
+  accel:null,fellBack:false,alignTimer:null,alignSince:null,alignT0:0,lastBeep:-1,saved:false};
+const DRIFT_MARGIN=5;
+function effDrift(raw){ return Math.max(0, raw - DRIFT_MARGIN); }
+let armAudio=null;
+function armBeep(freq,dur,vol){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    if(!armAudio) armAudio=new AC();
+    if(armAudio.state==='suspended') armAudio.resume().catch(()=>{});
+    const t=armAudio.currentTime;
+    const o=armAudio.createOscillator(), g=armAudio.createGain();
+    o.type='sine'; o.frequency.value=freq||880;
+    g.gain.setValueAtTime(vol||0.22,t);
+    g.gain.exponentialRampToValueAtTime(0.001,t+(dur||0.08));
+    o.connect(g); g.connect(armAudio.destination);
+    o.start(t); o.stop(t+(dur||0.08)+0.02);
+  }catch(_){}
+}
+function armSecondBeep(elapsed){
+  const s=Math.floor(elapsed);
+  if(s>armDrift.lastBeep){ armDrift.lastBeep=s; armBeep(880,0.07,0.2); }
+}
+function pitchFromGravity(g){
+  if(!g) return null;
+  return Math.atan2(g.y, Math.sqrt(g.x*g.x + g.z*g.z)) * 180/Math.PI;
+}
+function registerAngle(angle){
+  if(angle==null || isNaN(angle)) return;
+  armDrift.gotSamples++;
+  armDrift.lastSampleAt=performance.now();
+  armDrift.curAngle=angle;
+  if(armDrift.phase!=='running') return;
+  if(armDrift.startAngle==null){ armDrift.startAngle=angle; armDrift.lastAngle=angle; }
+  const drift=effDrift(Math.abs(angle - armDrift.startAngle));
+  armDrift.tremorBuf.push(Math.abs(angle - armDrift.lastAngle));
+  if(armDrift.tremorBuf.length>20) armDrift.tremorBuf.shift();
+  armDrift.lastAngle=angle;
+  armDrift.tremor=armDrift.tremorBuf.reduce((a,b)=>a+b,0)/armDrift.tremorBuf.length;
+  armDrift.maxDrift=Math.max(armDrift.maxDrift, drift);
+}
+function onOrientation(e){
+  if(armDrift.phase!=='running' && armDrift.phase!=='align') return;
+  let a=(e.beta!=null)?e.beta:null;
+  if(a==null && e.gamma!=null) a=e.gamma;
+  registerAngle(a);
+}
+function onMotion(e){
+  if(armDrift.phase!=='running' && armDrift.phase!=='align') return;
+  const g=e.accelerationIncludingGravity || e.acceleration;
+  registerAngle(pitchFromGravity(g));
+}
+function armTick(){
+  if(armDrift.phase!=='running') return;
+  const elapsed=(performance.now()-armDrift.t0)/1000;
+  armDrift.holdTime=elapsed;
+  armSecondBeep(elapsed);
+  const stalled = armDrift.gotSamples===0
+    ? elapsed>1.2
+    : (elapsed>2.5 && (armDrift.gotSamples<5 || performance.now()-armDrift.lastSampleAt>1500));
+  if(stalled && !armDrift.fellBack){
+    armDrift.fellBack=true;
+    armFreeSensors();
+    armDrift.source='sim';
+    if(armDrift.raf){ clearInterval(armDrift.raf); armDrift.raf=null; }
+    armDrift.t0=performance.now()-armDrift.holdTime*1000;
+    armDrift.simTimer=setInterval(armTickSim,50);
+    render();
+    return;
+  }
+  const drift=armDrift.startAngle!=null ? effDrift(Math.abs((armDrift.curAngle??armDrift.startAngle)-armDrift.startAngle)) : 0;
+  if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
+  if(elapsed>=armDrift.duration || armDrift.maxDrift>=30){ armStop(); return; }
+  updateArmLive(elapsed, drift);
+}
+function armTickSim(){
+  if(armDrift.phase!=='running') return;
+  const elapsed=(performance.now()-armDrift.t0)/1000;
+  armDrift.holdTime=elapsed;
+  armSecondBeep(elapsed);
+  const base=Math.pow(elapsed/armDrift.duration,1.6)*39;
+  const noise=(Math.random()-0.5)*3;
+  const drift=effDrift(Math.max(0, base+noise));
+  armDrift.maxDrift=Math.max(armDrift.maxDrift, drift);
+  armDrift.tremor=0.6+Math.abs(noise)*0.4;
+  if(armDrift.samples.length < Math.floor(elapsed/0.3)) armDrift.samples.push(drift);
+  if(elapsed>=armDrift.duration || armDrift.maxDrift>=30){ armStop(); return; }
+  updateArmLive(elapsed, drift);
+}
+function updateArmLive(elapsed, driftNow){
+  const el=document.getElementById('armLive'); if(!el) return;
+  if(driftNow==null) driftNow=0;
+  const pct=Math.min(100, elapsed/armDrift.duration*100);
+  const set=(id,v)=>{const x=el.querySelector(id); if(x)x.textContent=v;};
+  set('#armTime', elapsed.toFixed(1)+'s');
+  set('#armDriftV', driftNow.toFixed(1)+'°');
+  set('#armTremor', armDrift.tremor.toFixed(2));
+  const b=el.querySelector('#armBar'); if(b) b.style.width=pct+'%';
+  const st=el.querySelector('#armStatus');
+  if(st) st.textContent=armDrift.source==='sim' ? 'demo simulata'
+    : (armDrift.gotSamples>0 ? 'sensore attivo · '+armDrift.gotSamples+' letture' : 'in attesa del sensore…');
+  const arm=el.querySelector('#armVisual');
+  if(arm) arm.style.transform='rotate('+Math.min(driftNow,40)+'deg)';
+  const sl=el.querySelector('#armSpark');
+  if(sl && armDrift.samples.length>1) sl.innerHTML=spark(armDrift.samples, 0, C.alert, 50, 300);
+}
+async function armStart(){
+  let granted=true;
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      granted=(await DeviceOrientationEvent.requestPermission())==='granted';
+    }
+    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+      await DeviceMotionEvent.requestPermission().catch(()=>{});
+    }
+  }catch(_){}
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(AC && !armAudio) armAudio=new AC();
+    if(armAudio && armAudio.state==='suspended') armAudio.resume().catch(()=>{});
+  }catch(_){}
+  Object.assign(armDrift,{
+    phase:'align',source:null,gotSamples:0,startAngle:null,curAngle:null,
+    samples:[],tremorBuf:[],tremor:0,maxDrift:0,holdTime:0,lastAngle:0,saved:false,
+    fellBack:false,alignSince:null,lastBeep:-1,alignT0:performance.now()
+  });
+  render();
+  const hasOrient='DeviceOrientationEvent' in window;
+  const hasMotion='DeviceMotionEvent' in window;
+  if(granted && hasOrient){
+    armDrift.source='orientation';
+    window.addEventListener('deviceorientation', onOrientation, true);
+  }
+  if(granted && hasMotion){
+    window.addEventListener('devicemotion', onMotion);
+    if(!armDrift.source) armDrift.source='motion';
+  }
+  try{
+    if('Accelerometer' in window){
+      armDrift.accel=new Accelerometer({frequency:30});
+      armDrift.accel.addEventListener('reading',()=>{
+        if((armDrift.phase!=='running' && armDrift.phase!=='align') || armDrift.fellBack) return;
+        registerAngle(pitchFromGravity({x:armDrift.accel.x,y:armDrift.accel.y,z:armDrift.accel.z}));
+      });
+      armDrift.accel.addEventListener('error',()=>{});
+      armDrift.accel.start();
+      if(!armDrift.source) armDrift.source='accelerometer';
+    }
+  }catch(_){}
+  if(!granted || (!hasOrient && !hasMotion && !armDrift.accel)){
+    armDrift.source='sim';
+  }
+  armDrift.alignTimer=setInterval(alignLoop,100);
+}
+function alignLoop(){
+  if(armDrift.phase!=='align') return;
+  const now=performance.now(), elapsed=(now-armDrift.alignT0)/1000;
+  const dead = armDrift.source==='sim'
+    || (armDrift.gotSamples===0 && elapsed>1.4)
+    || (armDrift.gotSamples>0 && elapsed>2.8 && now-armDrift.lastSampleAt>1500);
+  if(dead){
+    armDrift.source='sim';
+    updateAlign(null,true);
+    if(elapsed>2.6) armGo();
+    return;
+  }
+  const a=armDrift.curAngle;
+  if(a!=null){
+    if(Math.abs(a)<=8){
+      if(!armDrift.alignSince) armDrift.alignSince=now;
+      if(now-armDrift.alignSince>=3000){ armBeep(660,0.12,0.25); armGo(); return; }
+    }else armDrift.alignSince=null;
+  }
+  updateAlign(a,false);
+}
+function updateAlign(a,simMode){
+  const el=document.getElementById('armAlign'); if(!el) return;
+  const st=el.querySelector('#armAlignStatus');
+  if(simMode){ if(st) st.textContent='sensori non disponibili: parte la demo simulata…'; return; }
+  if(a==null){ if(st) st.textContent='in attesa dei sensori… muovi leggermente il telefono'; return; }
+  const val=el.querySelector('#armTiltVal');
+  if(val) val.textContent=Math.abs(a).toFixed(0)+'°';
+  const dot=el.querySelector('#armBubble');
+  if(dot){
+    const x=Math.max(-1,Math.min(1,a/45))*70;
+    dot.style.transform='translateX('+x+'px)';
+    dot.style.background=Math.abs(a)<=8?'var(--ok)':'var(--warn)';
+  }
+  if(st){
+    if(Math.abs(a)<=8){
+      const held=armDrift.alignSince?(performance.now()-armDrift.alignSince)/1000:0;
+      st.textContent='perfetto: tieni fermo… '+Math.max(1,Math.ceil(3-held));
+    }else st.textContent='inclina finché il punto è al centro';
+  }
+}
+function armGo(){
+  if(armDrift.alignTimer){ clearInterval(armDrift.alignTimer); armDrift.alignTimer=null; }
+  Object.assign(armDrift,{
+    phase:'running', t0:performance.now(), lastBeep:-1,
+    samples:[], tremorBuf:[], tremor:0, maxDrift:0, holdTime:0,
+    startAngle:armDrift.source==='sim'?0:armDrift.curAngle,
+    lastAngle:armDrift.source==='sim'?0:(armDrift.curAngle??0),
+    fellBack:armDrift.source==='sim'
+  });
+  if(armDrift.source==='sim'){
+    armFreeSensors();
+    armDrift.simTimer=setInterval(armTickSim,50);
+  }else{
+    armDrift.raf=setInterval(armTick,50);
+  }
+  render();
+}
+function armFreeSensors(){
+  window.removeEventListener('deviceorientation', onOrientation, true);
+  window.removeEventListener('devicemotion', onMotion);
+  if(armDrift.accel){ try{armDrift.accel.stop();}catch(_){} armDrift.accel=null; }
+}
+function armInterpret(){
+  const {holdTime,maxDrift,tremor}=armDrift;
+  let tone='ok', txt='';
+  if(holdTime>=28 && maxDrift<10){ tone='ok'; txt='Tenuta completa con drift minimo: forza prossimale conservata.'; }
+  else if(maxDrift>=30 || holdTime<12){ tone='alert'; txt='Caduta precoce del braccio: debolezza prossimale affaticabile marcata.'; }
+  else { tone='warn'; txt='Drift moderato prima del termine: lieve affaticabilità prossimale da monitorare.'; }
+  if(tremor>1.5) txt+=' Tremore aumentato durante la tenuta.';
+  return {tone,txt};
+}
+function armStop(abort){
+  const wasRunning=armDrift.phase==='running';
+  armFreeSensors();
+  if(armDrift.raf){ clearInterval(armDrift.raf); armDrift.raf=null; }
+  if(armDrift.simTimer){ clearInterval(armDrift.simTimer); armDrift.simTimer=null; }
+  if(armDrift.alignTimer){ clearInterval(armDrift.alignTimer); armDrift.alignTimer=null; }
+  armDrift.phase=abort===true?'idle':'done';
+  if(wasRunning && abort!==true) armBeep(520,0.4,0.3);
+  if(armDrift.phase==='done' && !armDrift.saved){
+    armDrift.saved=true;
+    const r=armInterpret();
+    saveTestResult('armdrift',{hold_s:+armDrift.holdTime.toFixed(1), max_drift_deg:+armDrift.maxDrift.toFixed(1),
+      tremor:+armDrift.tremor.toFixed(2), source:armDrift.source, tone:r.tone}, r.tone, r.txt);
+  }
+  render();
+}
+function armReset(){ Object.assign(armDrift,{phase:'idle',samples:[],maxDrift:0,holdTime:0,tremor:0,saved:false}); render(); }
+
+/* ============================================================
+   SCHERMATE
+   ============================================================ */
+function gauge(val){
+  if(val==null) return '<div class="mono" style="font-size:26px;font-weight:600;color:var(--inkSoft);">—</div>';
+  const tone=val>=85?'var(--alert)':val>=70?'var(--warn)':'var(--ok)';
+  const dash=Math.round(val/100*213);
+  return '<svg width="86" height="86" viewBox="0 0 84 84" aria-hidden="true">'+
+    '<circle cx="42" cy="42" r="34" fill="none" stroke="#E3EDE5" stroke-width="9"/>'+
+    '<circle cx="42" cy="42" r="34" fill="none" stroke="'+tone+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+dash+' 214" transform="rotate(-90 42 42)"/>'+
+    '<text x="42" y="40" text-anchor="middle" font-size="18" font-weight="700" fill="#1B3A2A" font-family="Albert Sans,sans-serif">'+Math.round(val)+'</text>'+
+    '<text x="42" y="55" text-anchor="middle" font-size="9" fill="#61756A" font-family="Albert Sans,sans-serif">indice</text></svg>';
+}
+function todoRow(done,label,sub,onclick){
+  const mark=done
+    ? '<span style="width:26px;height:26px;border-radius:999px;background:var(--ok);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0;">✓</span>'
+    : '<span style="width:26px;height:26px;border-radius:999px;border:2.5px solid var(--line);flex-shrink:0;"></span>';
+  return '<button onclick="'+onclick+'" style="all:unset;cursor:pointer;display:flex;gap:11px;align-items:center;background:var(--card);border-radius:16px;padding:13px 15px;margin-top:8px;width:100%;box-sizing:border-box;'+(done?'opacity:.66;':'')+'">'+
+    mark+'<span style="min-width:0;"><span style="display:block;font-size:14px;font-weight:700;">'+label+'</span>'+
+    '<span style="display:block;font-size:12px;color:var(--inkSoft);margin-top:1px;">'+sub+'</span></span></button>';
+}
+
+function ScreenHome(){
+  const name=SET.name?', '+esc(SET.name.split(' ')[0]):'';
+  const dateStr=new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+  const en=SET.tests_enabled;
+  const anyTest=en.ptosi||en.conta||en.armdrift;
+  let testsRows='';
+  if(en.ptosi)    testsRows+=todoRow(!!STATE.today.tests.ptosi,   'Test ptosi','sguardo in alto 60 s · ore '+SET.tests_time,"setTab('test');openTest('ptosi')");
+  if(en.conta)    testsRows+=todoRow(!!STATE.today.tests.conta,   'Conta in un respiro','riserva respiratoria · ore '+SET.tests_time,"setTab('test');openTest('conta')");
+  if(en.armdrift) testsRows+=todoRow(!!STATE.today.tests.armdrift,'Arm drift','tenuta del braccio 30 s · ore '+SET.tests_time,"setTab('test');openTest('armdrift')");
+  const idx=STATE.lastIndex;
+  const idxSpark=STATE.daily.length>=1?spark(STATE.daily.slice(-7).map(d=>d.vocal_index??50),50,C.voice,40,260):'';
+  const alertsHtml=STATE.alerts.length? STATE.alerts.slice(0,3).map(a=>
+      '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:8px;">'+
+      '<span class="badge '+a.level+'" style="flex-shrink:0;">'+(a.level==='alert'?'alert':'attenzione')+'</span>'+
+      '<span style="font-size:12.5px;line-height:1.45;color:var(--inkSoft);">'+esc(a.message)+' <span class="mono" style="font-size:10.5px;">'+fmtDate(a.created_at)+'</span></span></div>').join('')
+    : '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:6px;">nessuna segnalazione recente</div>';
+  const cfgWarn=(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)?'':'<div class="card" style="margin-top:12px;background:var(--warnSoft);box-shadow:none;font-size:12.5px;color:var(--warn);line-height:1.55;"><b>Backend non configurato.</b> Le misure restano solo su questo telefono: compila <span class="mono">config.js</span> seguendo SETUP.md per attivare salvataggio, check-in e notifiche.</div>';
+  return ''+
+  '<div style="margin-top:6px;"><h1 style="font-size:25px;font-weight:700;letter-spacing:-0.01em;">Buongiorno'+name+'</h1>'+
+  '<div style="font-size:13.5px;color:var(--inkSoft);margin-top:2px;">'+dateStr+'</div></div>'+
+  cfgWarn+
+
+  '<div class="card" style="margin-top:14px;padding:18px;border-top:4px solid var(--voice);">'+
+    '<div class="row-flex"><div style="font-weight:700;font-size:15.5px;">Collana Horus</div>'+
+    '<span class="badge voice">'+(lis.phase==='running'?'● in ascolto':'pronta')+'</span></div>'+
+    '<div style="font-size:13px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">In questa demo <b>il microfono del telefono fa da collana</b>: durante le conversazioni estrae i parametri della voce e li confronta con il tuo baseline. L\u2019audio resta sul telefono.</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">'+
+      '<div class="tile"><div class="v">'+lis.winSent+'</div><div class="l">finestre inviate (sessione)</div></div>'+
+      '<div class="tile"><div class="v">'+(STATE.daily.length?Math.round(STATE.daily[STATE.daily.length-1].tot_s/60)+' min':'—')+'</div><div class="l">voce · ultimo giorno</div></div>'+
+    '</div>'+
+    '<button class="btn voice full" style="margin-top:14px;" onclick="setTab(\u0027ascolto\u0027)">'+(lis.phase==='running'?'Vai all\u2019ascolto':'Indossa la collana')+'</button>'+
+  '</div>'+
+
+  '<div class="seclabel">Da fare oggi</div>'+
+  todoRow(STATE.today.checkin,'Check-in vocale MG-ADL','2 minuti a voce · ore '+SET.checkin_time+(chk.beforeMeds!==false?' · prima dei farmaci':''),"setTab('checkin')")+
+  (anyTest? testsRows : '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:8px;padding:0 4px;">Nessun test attivo. Puoi attivare ptosi, conta e arm drift dalle <button class="btn small" style="padding:3px 10px;" onclick="openSettings()">impostazioni</button></div>')+
+
+  '<div class="seclabel">Indice vocale</div>'+
+  '<div class="card" style="display:flex;gap:14px;align-items:center;">'+gauge(idx)+
+    '<div style="flex:1;min-width:0;">'+(idx!=null?idxSpark:'<div style="font-size:12.5px;color:var(--inkSoft);line-height:1.5;">L\u2019indice compare dopo le prime ~10 finestre di voce: servono per costruire il tuo baseline personale.</div>')+
+    '<div style="font-size:11px;color:var(--inkSoft);margin-top:4px;">ultimi 7 giorni · 50 = baseline · <b>sperimentale, non diagnostico</b></div></div>'+
+  '</div>'+
+
+  '<div class="seclabel">Segnalazioni</div>'+
+  '<div class="card">'+alertsHtml+'</div>'+
+  '<div style="height:8px;"></div>'+
+  '<div class="card" style="background:var(--primarySoft);box-shadow:none;padding:12px 16px;"><div style="font-size:12.5px;color:#1B4D33;line-height:1.5;">I sintomi della miastenia fluttuano nella giornata: il check-in del mattino (prima dei farmaci) e l\u2019ascolto continuo aiutano a coglierne l\u2019andamento reale.</div></div>';
+}
+
+function baselineInfoLine(){
+  const b=lis.baseline;
+  if(!b) return 'ancora nessun baseline salvato: l\u2019indice usa come riferimento la registrazione in corso (parte da ~50)';
+  return b.manual
+    ? 'riferimento fissato da te · '+b.n+' finestre'
+    : 'baseline automatico · prime '+b.n+' finestre';
+}
+function ScreenAscolto(){
+  const running=lis.phase==='running';
+  const baseMode=running && lis.baselineMode;
+  const winS=(typeof MG_CONFIG!=='undefined'?MG_CONFIG.WINDOW_SECONDS:30);
+  const pendant=(extraId)=>
+  '<div class="pendant '+(running?'':'idle')+'"'+(extraId?' id="'+extraId+'"':'')+'>'+
+    '<div class="rw"></div><div class="rw r2"></div><div class="rw r3"></div>'+
+    '<div class="core"><svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M4 3c0 5 3.5 7 8 7s8-2 8-7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><rect x="9" y="10.5" width="6" height="9" rx="3" fill="#fff"/><path d="M7.2 15.5a4.8 4.8 0 0 0 9.6 0" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></div>'+
+  '</div>';
+
+  // --- sessione "stato basale" in corso ---
+  if(baseMode){
+    return '<h2 style="font-size:21px;margin-top:10px;">Sto registrando il tuo meglio</h2>'+
+    '<div style="font-size:13px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Parla con la tua voce normale per circa un minuto e mezzo. Useremo questa voce come <b>riferimento personale</b>: l\u2019indice dei prossimi giorni verrà confrontato con questo momento.</div>'+
+    '<div class="card" id="baseLive" style="margin-top:14px;text-align:center;padding:20px 18px;border-top:4px solid var(--voice);">'+pendant()+
+      '<div id="baseHint" style="font-size:12.5px;color:var(--inkSoft);min-height:18px;">parla con la tua voce normale: leggi qualcosa o racconta la giornata</div>'+
+      '<div style="height:8px;background:var(--line);border-radius:999px;margin-top:14px;overflow:hidden;"><div id="baseBar" style="width:0%;height:100%;background:var(--voice);border-radius:999px;transition:width .3s;"></div></div>'+
+      '<div class="mono" id="baseSec" style="font-size:12px;color:var(--inkSoft);margin-top:6px;">0s / '+lis.baseTarget+'s di voce</div>'+
+      '<div style="font-size:12px;color:#14474E;background:var(--voiceSoft);border-radius:12px;padding:9px 12px;margin-top:14px;line-height:1.5;">Suggerimento: fissa il baseline quando ti senti al meglio (ad esempio dopo i farmaci), in un ambiente silenzioso.</div>'+
+      '<button class="btn full" style="margin-top:14px;" onclick="baselineStop()">Ho finito</button>'+
+    '</div>'+
+    '<div style="font-size:12px;color:var(--inkSoft);margin-top:10px;text-align:center;">🔒 anche qui solo i parametri numerici vengono salvati</div>';
+  }
+
+  // --- ascolto normale in corso ---
+  if(running){
+    return '<h2 style="font-size:21px;margin-top:10px;">In ascolto…</h2>'+
+    '<div class="card" id="lisLive" style="margin-top:12px;text-align:center;padding:18px;">'+pendant()+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px;">'+
+        '<div class="tile"><div class="v" id="lvF0">—</div><div class="l">F0</div></div>'+
+        '<div class="tile"><div class="v" id="lvHNR">—</div><div class="l">HNR</div></div>'+
+        '<div class="tile"><div class="v" id="lvVoice">0%</div><div class="l">voce nella finestra</div></div>'+
+      '</div>'+
+      '<div style="height:6px;background:var(--line);border-radius:999px;margin-top:14px;"><div id="winBar" style="width:0%;height:100%;background:var(--voice);border-radius:999px;"></div></div>'+
+      '<div style="font-size:11px;color:var(--inkSoft);margin-top:4px;">finestra di '+winS+' s → riassunto inviato</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">'+
+        '<div class="tile"><div class="v" id="lvSent">'+lis.winSent+'</div><div class="l">finestre inviate</div></div>'+
+        '<div class="tile"><div class="v" id="lvMin">'+(lis.secToday/60).toFixed(1)+' min</div><div class="l">voce analizzata</div></div>'+
+      '</div>'+
+      '<button class="btn full" style="margin-top:16px;" onclick="lisStop()">Termina ascolto</button>'+
+    '</div>'+
+    '<div style="font-size:12px;color:var(--inkSoft);margin-top:10px;text-align:center;">🔒 l\u2019audio resta sul telefono · solo parametri numerici verso il database</div>';
+  }
+
+  // --- idle ---
+  const hasManual=lis.baseline&&lis.baseline.manual;
+  return '<h2 style="font-size:21px;margin-top:10px;">La collana</h2>'+
+  '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Avvia l\u2019ascolto e parla normalmente: al telefono, a tavola, in casa. Ogni '+winS+' secondi i parametri della voce vengono riassunti e inviati al tuo medico.</div>'+
+  '<div class="card" style="margin-top:14px;text-align:center;padding:22px 18px;">'+pendant('pend')+
+    '<div style="font-size:12.5px;color:var(--inkSoft);">stato: collana pronta · '+baselineInfoLine()+'</div>'+
+    '<button class="btn voice full" style="margin-top:16px;" onclick="lisStart()">Avvia ascolto</button>'+
+    mediaNote('Il microfono')+
+  '</div>'+
+
+  '<div class="card" style="margin-top:12px;padding:16px;border-left:4px solid var(--voice);">'+
+    '<div style="display:flex;align-items:center;gap:9px;"><span style="font-size:20px;">⭐</span><div style="font-weight:700;font-size:14.5px;">Fissa il tuo stato basale</div></div>'+
+    '<div style="font-size:12.5px;color:var(--inkSoft);line-height:1.55;margin-top:7px;">Quando ti senti <b>al meglio</b>, registra ~90 secondi della tua voce: diventerà il riferimento con cui confrontare le giornate seguenti. Puoi rifarlo quando vuoi, ad esempio dopo un cambio di terapia.</div>'+
+    (hasManual?'<div style="font-size:12px;color:var(--voice);background:var(--voiceSoft);border-radius:10px;padding:8px 11px;margin-top:10px;">✓ Riferimento personale già impostato'+(localStorage.getItem('mg_baseline_set')?' il '+localStorage.getItem('mg_baseline_set'):'')+' · '+lis.baseline.n+' finestre</div>':'')+
+    '<button class="btn full" style="margin-top:12px;" onclick="baselineStart()">'+(hasManual?'Aggiorna lo stato basale':'Registra lo stato basale')+'</button>'+
+  '</div>'+
+
+  '<div class="card" style="margin-top:12px;background:var(--voiceSoft);box-shadow:none;padding:13px 16px;"><div style="font-size:12.5px;color:#14474E;line-height:1.55;">🔒 <b>Privacy:</b> l\u2019audio non lascia mai il dispositivo e non viene registrato. Verso il database viaggiano solo numeri: F0, HNR, jitter, shimmer, pause, intensità.</div></div>'+
+  '<div class="card" style="margin-top:10px;box-shadow:none;background:transparent;padding:4px 6px;"><div style="font-size:12px;color:var(--inkSoft);line-height:1.55;">Nella collana vera un <b>sensore di vibrazione</b> a contatto con la pelle riconosce quando sei <b>tu</b> a parlare (anche se la voce è affaticata) e analizza solo la tua voce, ignorando chi ti sta intorno; l\u2019ascolto è continuo e a schermo spento. In questa demo sul telefono non c\u2019è quel sensore: il microfono analizza ciò che sente, quindi usala in un ambiente tranquillo e tieni l\u2019app aperta (lo schermo resta acceso).</div></div>';
+}
+
+function ScreenCheckin(){
+  if(chk.result){
+    const r=chk.result;
+    const grid=Object.keys(ITEM_LABEL).map(k=>{
+      const v=r.items[k]??0;
+      const col=v>=2?'var(--alert)':v===1?'var(--warn)':'var(--ink)';
+      return '<div class="tile"><div class="v" style="color:'+col+';">'+v+'</div><div class="l">'+ITEM_LABEL[k]+'</div></div>';
+    }).join('');
+    return '<h2 style="font-size:21px;margin-top:10px;">MG-ADL registrata ✓</h2>'+
+    '<div class="card" style="margin-top:12px;">'+
+      '<div class="row-flex"><div style="font-weight:700;">Totale <span class="mono" style="font-size:22px;">'+r.total+'</span><span style="color:var(--inkSoft);font-size:13px;"> / 24</span></div>'+
+      '<span class="badge '+(r.total>=9?'alert':r.total>=5?'warn':'ok')+'">'+(chk.beforeMeds?'prima dei farmaci':'dopo i farmaci')+'</span></div>'+
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:12px;">'+grid+'</div>'+
+      (r.note?'<div style="font-size:12.5px;color:var(--inkSoft);line-height:1.5;margin-top:10px;">📝 '+esc(r.note)+' <span class="badge neutral">affidabilità '+esc(r.confidence)+'</span></div>':'')+
+      '<div style="font-size:11px;color:var(--inkSoft);margin-top:10px;line-height:1.5;">Punteggi proposti dal modello a partire dalle tue parole: il medico li vede insieme alle risposte originali.</div>'+
+      '<button class="btn primary full" style="margin-top:14px;" onclick="chkClose()">Fatto</button>'+
+    '</div>';
+  }
+  if(chk.sending){
+    return '<div class="card" style="margin-top:40px;text-align:center;padding:34px 20px;">'+
+      '<div class="pendant idle" style="width:120px;height:120px;"><div class="rw"></div><div class="rw r2" style="inset:12px;"></div><div class="rw r3" style="inset:24px;"></div><div class="core" style="inset:34px;"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg></div></div>'+
+      '<div style="font-weight:700;margin-top:6px;">Sto compilando la scala…</div>'+
+      '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;">le tue risposte diventano punteggi MG-ADL</div></div>';
+  }
+  if(chk.step<0){
+    const last=STATE.scales[0];
+    return '<h2 style="font-size:21px;margin-top:10px;">Check-in vocale</h2>'+
+    '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Otto domande informali, come una chiacchierata: rispondi a voce e l\u2019app compila la scala <b>MG-ADL</b> per il tuo medico. Idealmente al mattino, <b>prima dei farmaci</b>.</div>'+
+    (STATE.today.checkin?'<div class="card" style="margin-top:12px;background:var(--okSoft);box-shadow:none;font-size:13px;color:#1B4D33;">✓ Check-in di oggi già registrato'+(last?' (totale '+last.total+'/24)':'')+'. Puoi rifarlo, ad esempio dopo i farmaci.</div>':'')+
+    '<div class="card" style="margin-top:14px;">'+
+      '<div class="switchrow" style="margin-top:0;background:var(--bg);"><div><div style="font-weight:700;font-size:13.5px;">Non ho ancora preso i farmaci</div><div style="font-size:11.5px;color:var(--inkSoft);">serve a interpretare i punteggi</div></div>'+
+      '<label class="switch"><input type="checkbox" '+(chk.beforeMeds?'checked':'')+' onchange="chk.beforeMeds=this.checked"><i></i></label></div>'+
+      (sttSupported()?'':'<div style="font-size:12px;color:var(--warn);margin-top:10px;line-height:1.5;">⚠ La dettatura non è supportata da questo browser: potrai scrivere le risposte.</div>')+
+      '<button class="btn voice full" style="margin-top:14px;" onclick="chkBegin()">Inizia (2 min)</button>'+
+    '</div>'+
+    '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:10px;line-height:1.5;padding:0 4px;">La trascrizione usa il riconoscimento vocale del browser; il punteggio è calcolato da un modello AI sul server e salvato con le tue parole originali.</div>';
+  }
+  if(chk.step>=CHK_Q.length){
+    const answered=chk.answers.filter(a=>a.trim()).length;
+    const list=CHK_Q.map((q,i)=>'<div style="margin-top:10px;"><div style="font-size:11px;font-weight:700;color:var(--inkSoft);">'+ITEM_LABEL[q.key]+'</div><div style="font-size:13px;line-height:1.45;margin-top:2px;">'+(chk.answers[i]?esc(chk.answers[i]):'<i style="color:var(--inkSoft);">nessuna risposta</i>')+'</div></div>').join('');
+    return '<h2 style="font-size:21px;margin-top:10px;">Riepilogo</h2>'+
+    '<div style="font-size:13px;color:var(--inkSoft);margin-top:3px;">'+answered+' risposte su '+CHK_Q.length+' · tocca Invia per il punteggio</div>'+
+    '<div class="card" style="margin-top:12px;">'+list+'</div>'+
+    (chk.error?'<div class="card" style="margin-top:10px;background:var(--alertSoft);box-shadow:none;font-size:12.5px;color:var(--alert);line-height:1.5;">Invio non riuscito: '+esc(chk.error)+'</div>':'')+
+    '<div style="display:flex;gap:10px;margin-top:14px;">'+
+      '<button class="btn full" onclick="chkNext(-1)">Indietro</button>'+
+      '<button class="btn voice full" onclick="chkSubmit()" '+(answered?'':'disabled')+'>Invia e calcola</button>'+
+    '</div>';
+  }
+  const q=CHK_Q[chk.step];
+  const dots=CHK_Q.map((_,i)=>'<span class="'+(i<chk.step?'done':i===chk.step?'cur':'')+'"></span>').join('');
+  return '<div class="dots" style="margin-top:14px;">'+dots+'</div>'+
+  '<div style="font-size:11px;color:var(--inkSoft);text-align:center;margin-top:6px;">'+(chk.step+1)+' di '+CHK_Q.length+' · '+ITEM_LABEL[q.key]+'</div>'+
+  '<div class="bubble bot">'+esc(q.q)+'</div>'+
+  (chk.answers[chk.step]&&!chk.listening?'<div class="bubble me">'+esc(chk.answers[chk.step])+'</div>':'')+
+  '<button class="micbtn '+(chk.listening?'live':'')+'" onclick="chkMic()" aria-label="'+(chk.listening?'Ferma la dettatura':'Rispondi a voce')+'">'+
+    (chk.listening
+      ?'<svg width="26" height="26" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="#fff"/></svg>'
+      :'<svg width="30" height="30" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>')+
+  '</button>'+
+  '<div style="text-align:center;font-size:12px;color:var(--inkSoft);">'+(chk.listening?'ti ascolto… tocca per fermare':'tocca e rispondi a voce, oppure scrivi sotto')+'</div>'+
+  '<textarea id="chkAns" class="ans" placeholder="…oppure scrivi qui la risposta" oninput="chk.answers[chk.step]=this.value">'+esc(chk.answers[chk.step]||'')+'</textarea>'+
+  '<div style="display:flex;gap:10px;margin-top:12px;">'+
+    '<button class="btn full" onclick="chkNext(-1)" '+(chk.step===0?'disabled':'')+'>Indietro</button>'+
+    '<button class="btn primary full" onclick="chkNext(1)">'+(chk.answers[chk.step]?'Avanti':'Salta')+'</button>'+
+  '</div>'+
+  '<div style="text-align:center;margin-top:10px;"><button class="btn small" onclick="speakQ()">🔊 Riascolta la domanda</button></div>';
+}
+
+/* ---------------- schermata Test ---------------- */
+function testHead(title){
+  return '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;">'+
+  '<button class="iconbtn" onclick="closeTest()" aria-label="Torna ai test" style="padding:8px 11px;">←</button>'+
+  '<h2 style="font-size:19px;">'+title+'</h2></div>';
+}
+function savedBadge(t){
+  if(!SBOK) return '<span class="badge warn">non salvato: backend assente</span>';
+  return t.saved?'<span class="badge ok">salvato nel diario ✓</span>':'';
+}
+function eyeCard(){
+  if(eyeTest.phase==='idle'){
+    return '<div class="card" style="margin-top:14px;padding:20px;text-align:center;">'+
+      '<div style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;"><svg width="30" height="30" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5.5" fill="#2D7A52"/><circle cx="12" cy="12" r="2.6" fill="#fff"/></svg></div>'+
+      '<div style="margin-top:10px;"><span class="badge neutral">Fotocamera frontale · Face Landmarker</span></div>'+
+      '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Tieni il telefono all\u2019altezza degli occhi e <b>fissa il punto in cima allo schermo</b> per '+eyeTest.duration+' secondi. L\u2019app misura il calo dell\u2019apertura palpebrale (ptosi affaticabile). Al primo avvio scarica ~3 MB di modello.</div>'+
+      mediaNote('La fotocamera')+
+      '<button class="btn primary full" style="margin-top:14px;" onclick="eyeStart()">Avvia test ptosi</button></div>';
+  }
+  if(eyeTest.phase==='running'){
+    const visual=eyeTest.source==='sim'
+      ? '<div aria-hidden="true" style="height:140px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#EDF3F4,#EDF3F4 10px,#E5EDEF 10px,#E5EDEF 20px);border:1px dashed #9AB3B9;font-size:38px;">👁️</div>'
+      : '<div style="position:relative;margin-top:12px;border-radius:10px;overflow:hidden;background:#15262C;">'
+          +'<video id="eyeVideo" playsinline muted autoplay style="display:block;width:100%;max-height:190px;object-fit:cover;transform:scaleX(-1);"></video>'
+          +'<canvas id="eyeOverlay" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);pointer-events:none;"></canvas>'
+        +'</div>'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;">'
+          +'<div style="font-size:11px;color:var(--inkSoft);line-height:1.4;"><span style="color:#39E0A8;">●</span> occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso</div>'
+          +'<button id="eyeOverlayBtn" class="btn small" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">Nascondi punti</button>'
+        +'</div>';
+    return '<div class="card" id="eyeLive" style="margin-top:8px;padding:18px;">'+
+      '<div style="text-align:center;margin-bottom:8px;"><span aria-hidden="true" style="display:inline-block;width:16px;height:16px;border-radius:999px;background:var(--primary);animation:mgPulse 1.6s ease-in-out infinite;"></span>'+
+      '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;">tieni lo sguardo su questo punto, in alto</div></div>'+
+      '<div class="row-flex"><span class="badge alert">● registrazione</span><span class="mono" id="eyeTime" style="font-weight:600;">0s / '+eyeTest.duration+'s</span></div>'+
+      '<div style="height:6px;background:var(--line);border-radius:999px;margin-top:10px;"><div id="eyeBar" style="width:0%;height:100%;background:var(--primary);border-radius:999px;"></div></div>'+
+      '<div id="eyeStatus" style="font-size:11px;color:var(--inkSoft);margin-top:6px;text-align:center;">caricamento modello…</div>'+
+      visual+'<div id="eyeSpark" style="margin-top:10px;"></div>'+
+      '<div style="display:flex;justify-content:space-around;margin-top:12px;text-align:center;">'+
+        '<div><div class="mono" style="font-size:20px;font-weight:600;color:var(--primary);" id="eyeEAR">—</div><div style="font-size:11px;color:var(--inkSoft);">EAR (apertura)</div></div>'+
+        '<div><div class="mono" style="font-size:20px;font-weight:600;color:var(--warn);" id="eyePFH">—</div><div style="font-size:11px;color:var(--inkSoft);">rima palpebrale</div></div></div>'+
+      '<button class="btn full" style="margin-top:14px;" onclick="eyeStop()">Termina ora</button></div>';
+  }
+  const m=computeEyeBiomarkers(), r=eyeInterpretBio(m);
+  if(!m.ok){
+    return '<div class="card" style="margin-top:14px;padding:18px;"><div class="row-flex"><div style="font-weight:700;">Risultato — ptosi</div><span class="badge warn">Dato insufficiente</span></div>'+
+    '<div class="card" style="margin-top:12px;padding:12px;background:var(--warnSoft);box-shadow:none;font-size:13px;color:var(--warn);line-height:1.5;">'+r.txt+'</div>'+
+    '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="eyeReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
+  }
+  const tl=(v,l,c)=>'<div class="tile"><div class="v" style="'+(c?'color:'+c+';':'')+'">'+v+'</div><div class="l">'+l+'</div></div>';
+  const pColor=m.endPFH>0&&m.endPFH<6?'var(--warn)':'';
+  const dColor=m.declPFH>=20?'var(--alert)':'';
+  return '<div class="card" style="margin-top:14px;padding:18px;">'+
+    '<div class="row-flex"><div style="font-weight:700;">Risultato — ptosi</div><span class="badge '+r.tone+'">'+(r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato')+'</span></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;">'+
+      tl(m.basePFH.toFixed(1)+' mm','rima iniziale','')+tl(m.endPFH.toFixed(1)+' mm','rima finale',pColor)+tl('−'+Math.max(0,m.declPFH).toFixed(0)+'%','calo rima',dColor)+
+      tl(m.endEAR.toFixed(2),'EAR finale','')+tl(m.endMRD.toFixed(1)+' mm','MRD finale','')+tl(m.blinks,'ammiccamenti','')+'</div>'+
+    (m.earContour.length>1?'<div style="margin-top:12px;">'+spark(m.earContour,m.earContour[0],C.primary,50,300)+'</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">EAR nel tempo · tratteggio = partenza</div>':'')+
+    '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
+    '<div style="margin-top:10px;">'+savedBadge(eyeTest)+'</div>'+
+    '<div style="font-size:11px;color:var(--inkSoft);margin-top:8px;line-height:1.5;">Elaborazione on-device: nessuna immagine lascia il telefono. mm calibrati sul diametro dell\u2019iride (≈ 11,7 mm).</div>'+
+    '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="eyeReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
+}
+function sbcCard(){
+  if(sbcTest.phase==='idle'){
+    return '<div class="card" style="margin-top:14px;padding:20px;text-align:center;">'+
+      '<div style="width:64px;height:64px;border-radius:999px;background:var(--voiceSoft);display:grid;place-items:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#1F6E78"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#1F6E78" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#1F6E78" stroke-width="2" stroke-linecap="round"/></svg></div>'+
+      '<div style="margin-top:10px;"><span class="badge voice">Microfono</span></div>'+
+      '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Fai un <b>respiro profondo</b> e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. La durata della fonazione stima la riserva respiratoria.</div>'+
+      mediaNote('Il microfono')+
+      '<button class="btn voice full" style="margin-top:14px;" onclick="sbcStart()">Avvia conta</button></div>';
+  }
+  if(sbcTest.phase==='running'){
+    return '<div class="card" id="sbcLive" style="margin-top:14px;padding:18px;">'+
+      '<div class="row-flex"><span class="badge alert">● registrazione</span><span class="mono" style="font-weight:600;">max '+sbcTest.maxDur+'s</span></div>'+
+      '<div id="sbcStatus" style="font-size:12.5px;color:var(--inkSoft);margin-top:8px;text-align:center;">fai un respiro profondo e inizia a contare</div>'+
+      '<div style="text-align:center;margin-top:12px;"><span class="mono" id="sbcTime" style="font-size:34px;font-weight:600;color:var(--voice);">0.0s</span><div style="font-size:11px;color:var(--inkSoft);">fonazione continua</div></div>'+
+      '<div style="height:10px;background:var(--line);border-radius:999px;margin-top:12px;overflow:hidden;"><div id="sbcVu" style="width:0%;height:100%;background:var(--voice);border-radius:999px;"></div></div>'+
+      '<div style="font-size:10.5px;color:var(--inkSoft);margin-top:3px;">livello voce</div>'+
+      '<div style="height:5px;background:var(--line);border-radius:999px;margin-top:10px;"><div id="sbcBar" style="width:0%;height:100%;background:var(--inkSoft);border-radius:999px;"></div></div>'+
+      '<div id="sbcSpark" style="margin-top:12px;"></div>'+
+      '<button class="btn full" style="margin-top:14px;" onclick="sbcStop()">Termina ora</button></div>';
+  }
+  const r=sbcInterpret();
+  return '<div class="card" style="margin-top:14px;padding:18px;">'+
+    '<div class="row-flex"><div style="font-weight:700;">Risultato — conta in un respiro</div><span class="badge '+r.tone+'">'+(r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato')+'</span></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">'+
+      '<div class="tile"><div class="v">'+sbcTest.phonation.toFixed(1)+'s</div><div class="l">fonazione</div></div>'+
+      '<div class="tile"><div class="v">≈ '+r.count+'</div><div class="l">conteggio stimato</div></div></div>'+
+    (sbcTest.samples.length>1?'<div style="margin-top:12px;">'+spark(sbcTest.samples,null,C.voice,50,300)+'</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">intensità vocale durante il conteggio</div>':'')+
+    '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
+    '<div style="margin-top:10px;">'+savedBadge(sbcTest)+'</div>'+
+    '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="sbcReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
+}
+function armCard(){
+  if(armDrift.phase==='idle'){
+    return '<div class="card" style="margin-top:14px;padding:20px;text-align:center;">'+
+      '<div style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24"><rect x="2" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="18" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="6" y="11" width="12" height="2" rx="1" fill="#2D7A52"/></svg></div>'+
+      '<div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>'+
+      '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Telefono nella mano, <b>braccio teso in avanti</b> all\u2019orizzontale: mantienilo finché riesci (max '+armDrift.duration+' s). Misuriamo tenuta, caduta progressiva e tremore. Un bip scandisce i secondi.</div>'+
+      '<button class="btn primary full" style="margin-top:14px;" onclick="armStart()">Avvia arm drift</button></div>';
+  }
+  if(armDrift.phase==='align'){
+    return '<div class="card" id="armAlign" style="margin-top:14px;padding:20px;text-align:center;">'+
+      '<div style="font-weight:700;">Mettiti in posizione</div>'+
+      '<div style="font-size:13px;color:var(--inkSoft);line-height:1.5;margin-top:6px;">Braccio teso in avanti, telefono orizzontale nel palmo. Quando il punto resta al centro per 3 secondi parte la misura.</div>'+
+      '<div style="position:relative;height:54px;margin:18px 12px 6px;background:var(--bg);border-radius:999px;overflow:hidden;">'+
+        '<div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--line);"></div>'+
+        '<div id="armBubble" style="position:absolute;left:calc(50% - 13px);top:14px;width:26px;height:26px;border-radius:999px;background:var(--warn);transition:transform .1s linear;"></div></div>'+
+      '<div class="mono" id="armTiltVal" style="font-size:20px;font-weight:600;">—</div>'+
+      '<div id="armAlignStatus" style="font-size:12.5px;color:var(--inkSoft);margin-top:6px;">in attesa dei sensori…</div>'+
+      '<button class="btn full" style="margin-top:14px;" onclick="armStop(true)">Annulla</button></div>';
+  }
+  if(armDrift.phase==='running'){
+    return '<div class="card" id="armLive" style="margin-top:14px;padding:18px;">'+
+      '<div class="row-flex"><span class="badge alert">● misura in corso</span><span class="mono" id="armTime" style="font-weight:600;">0.0s</span></div>'+
+      '<div id="armStatus" style="font-size:11px;color:var(--inkSoft);margin-top:5px;text-align:center;">sensore attivo</div>'+
+      '<div style="height:6px;background:var(--line);border-radius:999px;margin-top:10px;"><div id="armBar" style="width:0%;height:100%;background:var(--primary);border-radius:999px;"></div></div>'+
+      '<div aria-hidden="true" style="height:90px;display:grid;place-items:center;margin-top:8px;"><div id="armVisual" style="width:120px;height:14px;border-radius:999px;background:var(--primary);transform-origin:left center;transition:transform .1s linear;box-shadow:0 4px 12px rgba(45,122,82,.3);"></div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'+
+        '<div class="tile"><div class="v" id="armDriftV" style="color:var(--alert);">0.0°</div><div class="l">caduta oltre margine</div></div>'+
+        '<div class="tile"><div class="v" id="armTremor">0.00</div><div class="l">tremore</div></div></div>'+
+      '<div id="armSpark" style="margin-top:12px;"></div>'+
+      '<button class="btn full" style="margin-top:14px;" onclick="armStop()">Non riesco più</button></div>';
+  }
+  const r=armInterpret();
+  return '<div class="card" style="margin-top:14px;padding:18px;">'+
+    '<div class="row-flex"><div style="font-weight:700;">Risultato — arm drift</div><span class="badge '+r.tone+'">'+(r.tone==='ok'?'Nella norma':r.tone==='warn'?'Da monitorare':'Alterato')+'</span></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;">'+
+      '<div class="tile"><div class="v">'+armDrift.holdTime.toFixed(1)+'s</div><div class="l">tenuta</div></div>'+
+      '<div class="tile"><div class="v">'+armDrift.maxDrift.toFixed(0)+'°</div><div class="l">drift max</div></div>'+
+      '<div class="tile"><div class="v">'+armDrift.tremor.toFixed(2)+'</div><div class="l">tremore</div></div></div>'+
+    (armDrift.samples.length>1?'<div style="margin-top:12px;">'+spark(armDrift.samples,0,C.alert,50,300)+'</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">caduta del braccio nel tempo (oltre i '+DRIFT_MARGIN+'° di margine)</div>':'')+
+    '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
+    '<div style="margin-top:10px;">'+savedBadge(armDrift)+'</div>'+
+    '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="armReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
+}
+function ScreenTest(){
+  if(testView==='ptosi')    return (eyeTest.phase==='running'?'':testHead('Test ptosi')+extraBanner('ptosi'))+eyeCard();
+  if(testView==='conta')    return testHead('Conta in un respiro')+extraBanner('conta')+sbcCard();
+  if(testView==='armdrift') return testHead('Arm drift')+extraBanner('armdrift')+armCard();
+  const en=SET.tests_enabled;
+  const item=(key,title,sub,emoji)=>{
+    const on=!!en[key], done=!!STATE.today.tests[key];
+    return '<button '+(on?'onclick="openTest(\u0027'+key+'\u0027)"':'onclick="openSettings()"')+
+      ' style="all:unset;cursor:pointer;display:flex;gap:13px;align-items:center;background:var(--card);border-radius:18px;padding:15px;margin-top:10px;width:100%;box-sizing:border-box;'+(on?'':'opacity:.55;')+'">'+
+      '<span style="font-size:26px;flex-shrink:0;">'+emoji+'</span>'+
+      '<span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:14.5px;">'+title+'</span>'+
+      '<span style="display:block;font-size:12px;color:var(--inkSoft);margin-top:1px;">'+(on?sub:'non attivo · tocca per attivarlo nelle impostazioni')+'</span></span>'+
+      (on?(done?'<span class="badge ok">fatto oggi ✓</span>':'<span class="badge neutral">'+SET.tests_time+'</span>'):'')+
+      '</button>';
+  };
+  return '<h2 style="font-size:21px;margin-top:10px;">Test del giorno</h2>'+
+  '<div style="font-size:13px;color:var(--inkSoft);margin-top:3px;line-height:1.5;">I test attivi hanno un promemoria alle '+SET.tests_time+', ma puoi eseguirli quando vuoi. I risultati finiscono nel diario condiviso con il medico; se rifai un test già fatto oggi, ti chiedo se salvare la misura extra.</div>'+
+  item('ptosi','Ptosi — sguardo in alto','fotocamera · 60 s','👁️')+
+  item('conta','Conta in un respiro','microfono · ~30 s','🫁')+
+  item('armdrift','Arm drift','sensori di movimento · 30 s','💪');
+}
+
+/* ---------------- schermata Trend ---------------- */
+function ScreenTrend(){
+  const days=STATE.daily;
+  const idxSeries=days.map(d=>d.vocal_index).filter(v=>v!=null);
+  const scAsc=STATE.scales.slice().reverse();
+  const scSeries=scAsc.map(s=>s.total);
+  const mini=(key,label,unit)=>{
+    const serie=days.slice(-14).map(d=>d[key]).filter(v=>v!=null);
+    const last=serie.length?serie[serie.length-1]:null;
+    return '<div class="card" style="padding:12px;">'+
+      '<div class="row-flex"><span style="font-size:12px;font-weight:700;">'+label+'</span><span class="mono" style="font-size:12px;color:var(--inkSoft);">'+(last!=null?(+last).toFixed(1)+unit:'—')+'</span></div>'+
+      (serie.length>=1?spark(serie,null,C.inkSoft,32,240):'<div style="font-size:11px;color:var(--inkSoft);">—</div>')+'</div>';
+  };
+  return '<h2 style="font-size:21px;margin-top:10px;">Andamento</h2>'+
+  '<div class="seclabel" style="margin-top:12px;">Indice vocale · 30 giorni</div>'+
+  '<div class="card">'+(idxSeries.length>=1?spark(idxSeries,50,C.voice,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Ancora pochi dati: indossa la collana per qualche giorno.</div>')+
+  '<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">50 = baseline personale · sopra 70 attenzione, sopra 85 alert · <b>sperimentale</b></div></div>'+
+  '<div class="seclabel">MG-ADL dal check-in</div>'+
+  '<div class="card">'+(scSeries.length>=1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-in per iniziare la serie.</div>')+
+  (STATE.scales.length?'<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">ultimo: <b>'+STATE.scales[0].total+'/24</b> · '+fmtDate(STATE.scales[0].taken_at)+' '+fmtTime(STATE.scales[0].taken_at)+(STATE.scales[0].before_meds?' · prima dei farmaci':'')+'</div>':'')+'</div>'+
+  '<div class="seclabel">Parametri della voce · 14 giorni</div>'+
+  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">'+
+    mini('hnr','HNR',' dB')+mini('shimmer','Shimmer','%')+mini('jitter','Jitter','%')+mini('pause_ratio','Pause','%')+'</div>'+
+  '<div class="seclabel">Ultimi test</div>'+
+  '<div class="card">'+((STATE.tests&&STATE.tests.length)?STATE.tests.slice(0,5).map(t=>{
+      const m=t.metrics||{};
+      const lbl=t.test_type==='ptosi'?'Ptosi · calo rima '+(m.decl_pfh_pct??'—')+'%':
+               t.test_type==='conta'?'Conta · ≈'+(m.count_est??'—')+' ('+(m.phonation_s??'—')+'s)':
+               'Arm drift · '+(m.hold_s??'—')+'s, '+(m.max_drift_deg??'—')+'°';
+      return '<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">'+lbl+'</span><span style="display:flex;gap:7px;align-items:center;"><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'da monitorare':'ok')+'</span><span class="mono" style="font-size:10.5px;color:var(--inkSoft);">'+fmtDate(t.taken_at)+'</span></span></div>';
+    }).join(''):'<div style="font-size:12.5px;color:var(--inkSoft);">nessun test registrato</div>')+'</div>'+
+  '<div style="text-align:center;margin-top:18px;"><a href="medico.html" style="font-size:13px;color:var(--primary);font-weight:700;">Apri la dashboard medico →</a></div>';
+}
+
+/* ---------------- impostazioni ---------------- */
+function openSettings(){
+  const en=SET.tests_enabled;
+  const sw=(id,checked,title,sub)=>'<div class="switchrow"><div><div style="font-weight:700;font-size:13.5px;">'+title+'</div><div style="font-size:11.5px;color:var(--inkSoft);">'+sub+'</div></div><label class="switch"><input type="checkbox" id="'+id+'" '+(checked?'checked':'')+'><i></i></label></div>';
+  document.getElementById('settingsRoot').innerHTML=
+  '<div class="modal" onclick="if(event.target===this)closeSettings()"><div class="sheet">'+
+    '<div class="row-flex"><h2 style="font-size:19px;">Impostazioni</h2><button class="iconbtn" onclick="closeSettings()" aria-label="Chiudi">✕</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
+      '<div class="field"><label for="setFirst">Nome</label><input type="text" id="setFirst" value="'+esc(SET.first_name)+'" placeholder="es. Maria" autocapitalize="words"></div>'+
+      '<div class="field"><label for="setLast">Cognome</label><input type="text" id="setLast" value="'+esc(SET.last_name)+'" placeholder="es. Rossi" autocapitalize="words"></div></div>'+
+      '<div class="field"><label for="setCode">Codice paziente (assegnato a questo dispositivo)</label><input type="text" id="setCode" value="'+esc(SET.code)+'"></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
+      '<div class="field"><label for="setCheckin">Check-in vocale</label><input type="time" id="setCheckin" value="'+SET.checkin_time+'"></div>'+
+      '<div class="field"><label for="setMeds">Farmaci del mattino</label><input type="time" id="setMeds" value="'+SET.meds_time+'"></div></div>'+
+    '<div class="seclabel">Test su notifica</div>'+
+    '<div class="field" style="margin-top:6px;"><label for="setTests">Orario dei test</label><input type="time" id="setTests" value="'+SET.tests_time+'"></div>'+
+    sw('swPtosi',en.ptosi,'Ptosi','sguardo in alto · fotocamera')+
+    sw('swConta',en.conta,'Conta in un respiro','riserva respiratoria · microfono')+
+    sw('swArm',en.armdrift,'Arm drift','tenuta del braccio · sensori movimento')+
+    '<div class="seclabel">Voce e notifiche</div>'+
+    sw('swTts',SET.tts,'Leggi le domande ad alta voce','sintesi vocale del check-in')+
+    '<div class="field" style="margin-top:10px;"><label for="setVoiceMode">Voce dell\u2019assistente</label>'+
+      '<select id="setVoiceMode" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink);">'+
+        '<option value="system"'+(SET.voiceMode!=='kokoro'?' selected':'')+'>Voce di sistema · gratuita, offline</option>'+
+        '<option value="kokoro"'+(SET.voiceMode==='kokoro'?' selected':'')+'>Voce naturale (on-device) · ~82 MB al primo uso</option>'+
+      '</select>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">La voce naturale scarica un modello neurale una sola volta e poi funziona offline; se il dispositivo non la supporta si torna automaticamente alla voce di sistema.</div></div>'+
+    '<div class="card" style="margin-top:10px;padding:14px;">'+
+      '<div style="font-weight:700;font-size:13.5px;">Notifiche push</div>'+
+      '<div style="font-size:12px;color:var(--inkSoft);line-height:1.5;margin-top:3px;">Promemoria all\u2019orario scelto anche ad app chiusa. Su iPhone: prima installa l\u2019app in Home (Condividi → Aggiungi a schermata Home).</div>'+
+      '<div id="pushStatus" style="font-size:12px;margin-top:8px;color:var(--inkSoft);">'+((('Notification' in window)&&Notification.permission==='granted')?'permesso concesso ✓':'non ancora attive')+'</div>'+
+      '<div style="display:flex;gap:9px;margin-top:10px;">'+
+        '<button class="btn small full" onclick="enablePush()">Attiva su questo dispositivo</button>'+
+        '<button class="btn small full" onclick="testPush()">Invia prova</button></div></div>'+
+    '<button class="btn primary full" style="margin-top:16px;" onclick="saveSettingsUI()">Salva</button>'+
+    '<div style="text-align:center;margin-top:12px;"><a href="medico.html" style="font-size:12.5px;color:var(--primary);font-weight:700;">Dashboard medico →</a></div>'+
+  '</div></div>';
+}
+function closeSettings(){ document.getElementById('settingsRoot').innerHTML=''; }
+async function saveSettingsUI(){
+  const v=id=>document.getElementById(id);
+  SET.code=v('setCode').value.trim()||SET.code;
+  SET.first_name=v('setFirst').value.trim();
+  SET.last_name=v('setLast').value.trim();
+  SET.name=fullName(SET);
+  SET.checkin_time=v('setCheckin').value||SET.checkin_time;
+  SET.meds_time=v('setMeds').value||SET.meds_time;
+  SET.tests_time=v('setTests').value||SET.tests_time;
+  SET.tests_enabled={ptosi:v('swPtosi').checked,conta:v('swConta').checked,armdrift:v('swArm').checked};
+  SET.tts=v('swTts').checked;
+  SET.voiceMode=(v('setVoiceMode')&&v('setVoiceMode').value==='kokoro')?'kokoro':'system';
+  saveSettings(); closeSettings(); render();
+  MGVoice.cancel(); MGVoice.prepare();   // applica subito la scelta (eventuale download Kokoro)
+  if(SBOK){ await ensurePatient(); refreshData(); toast('Impostazioni salvate e sincronizzate'); }
+  else toast('Salvate sul dispositivo');
+}
+function urlB64ToUint8(b64){
+  const pad='='.repeat((4-b64.length%4)%4);
+  const base=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base); const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+async function enablePush(){
+  const st=document.getElementById('pushStatus');
+  const say=m=>{ if(st) st.textContent=m; };
+  try{
+    if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return say('push non supportate da questo browser');
+    if(!SBOK) return say('prima configura Supabase in config.js');
+    if(MG_CONFIG.VAPID_PUBLIC_KEY.includes('INCOLLA')) return say('manca la VAPID_PUBLIC_KEY in config.js');
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted') return say('permesso negato dal sistema');
+    await ensurePatient();
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(MG_CONFIG.VAPID_PUBLIC_KEY)});
+    const {error}=await sb.from('push_subscriptions').upsert(
+      {patient_id:PID, subscription:sub.toJSON(), user_agent:navigator.userAgent.slice(0,180)},
+      {onConflict:'patient_id,endpoint'});
+    if(error) throw error;
+    say('attive su questo dispositivo ✓');
+  }catch(e){ say('errore: '+(e.message||e)); }
+}
+async function testPush(){
+  const st=document.getElementById('pushStatus');
+  try{
+    const r=await fetch(MG_CONFIG.SUPABASE_URL+'/functions/v1/send-reminders',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':MG_CONFIG.SUPABASE_ANON_KEY,'Authorization':'Bearer '+MG_CONFIG.SUPABASE_ANON_KEY},
+      body:JSON.stringify({test_patient_code:SET.code})});
+    const d=await r.json().catch(()=>({}));
+    if(st) st.textContent=r.ok?('prova inviata: '+(d.sent||0)+' notifiche'+((d.sent||0)===0?' — attivale prima qui sopra':'')):('errore: '+(d.error||r.status));
+  }catch(e){ if(st) st.textContent='errore di rete: '+(e.message||e); }
+}
+
+/* ============================================================
+   TERAPIA — piano dei farmaci e assunzioni
+   Il paziente registra nome, dose e orario di ogni farmaco e
+   segna quando lo prende. Al mattino: prima il check-in, poi la
+   terapia (Horus lo ricorda). I dati stanno in `medications` e
+   `med_intakes` su Supabase.
+   ============================================================ */
+function medMin(t){ if(!t) return null; const p=String(t).split(':'); return (+p[0])*60+(+(p[1]||0)); }
+function isMorning(t){ const m=medMin(t); return m!=null && m<12*60; }            // "mattino" = prima di mezzogiorno
+function medTakenToday(id){ return !!(STATE.today.meds&&STATE.today.meds[id]); }
+function morningMeds(){ return (STATE.meds||[]).filter(m=>isMorning(m.time_of_day)); }
+function pendingMorningMeds(){ return morningMeds().filter(m=>!medTakenToday(m.id)); }
+function pendingMeds(){ return (STATE.meds||[]).filter(m=>!medTakenToday(m.id)); }
+function firstMorningMedTime(){
+  const mm=morningMeds().map(m=>m.time_of_day).sort();
+  return mm.length?mm[0].slice(0,5):(SET.meds_time||'08:00');
+}
+
+async function logMedIntake(medId){
+  if(!SBOK||!PID){ toast('Collega Supabase per registrare la terapia'); return false; }
+  const med=(STATE.meds||[]).find(m=>m.id===medId);
+  if(!med){ toast('Farmaco non trovato'); return false; }
+  if(medTakenToday(medId)){ toast('Già segnata come presa oggi'); return true; }
+  try{
+    await sb.from('med_intakes').insert({patient_id:PID, medication_id:med.id, name:med.name, dose:med.dose||null,
+      taken_at:new Date().toISOString(), taken_on:todayISO(), source:'app'});
+    await refreshData();
+    toast('Terapia registrata ✓');
+    return true;
+  }catch(e){ console.warn('logMedIntake',e); toast('Registrazione non riuscita'); return false; }
+}
+async function addMedFromForm(){
+  const name=(document.getElementById('medName')?.value||'').trim();
+  const dose=(document.getElementById('medDose')?.value||'').trim();
+  const time=(document.getElementById('medTime')?.value||'').trim();
+  const err=document.getElementById('medErr');
+  if(!name || !time){ if(err) err.textContent='Servono almeno nome e orario.'; return; }
+  if(!SBOK||!PID){ if(err) err.textContent='Collega Supabase per salvare la terapia.'; return; }
+  try{
+    await sb.from('medications').insert({patient_id:PID, name, dose:dose||null, time_of_day:time, active:true});
+    await refreshData();
+    toast('Farmaco aggiunto');
+  }catch(e){ console.warn('addMed',e); if(err) err.textContent='Salvataggio non riuscito: '+(e.message||e); }
+}
+async function delMed(id){
+  if(!SBOK||!PID) return;
+  try{ await sb.from('medications').delete().eq('id',id); await refreshData(); toast('Farmaco rimosso'); }
+  catch(e){ console.warn('delMed',e); toast('Rimozione non riuscita'); }
+}
+/* azione di Horus: registra un'assunzione, risolvendo quale farmaco.
+   Se è chiaro quale farmaco, lo "spunta" (logMedIntake) e resta nella chat;
+   se è ambiguo (più farmaci in sospeso e nessun nome) apre la pagina Terapia. */
+async function markTherapy(input){
+  const nome=(input&&input.nome||'').toLowerCase().trim();
+  let target=null;
+  if(nome){ target=pendingMeds().find(m=>m.name.toLowerCase().includes(nome)) || (STATE.meds||[]).find(m=>m.name.toLowerCase().includes(nome)); }
+  if(!target){
+    const pend=pendingMeds();
+    if(pend.length===1) target=pend[0];
+  }
+  if(target){
+    await logMedIntake(target.id);   // spunta l'assunzione + toast; refreshData ri-renderizza la chat
+    if(currentTab!=='horus'){ currentTab='terapia'; render({top:true}); }
+    return true;
+  }
+  // ambiguo (più farmaci) o nulla da segnare → apri la pagina per scegliere
+  if(pendingMeds().length>1){
+    pushBot('Hai più farmaci in elenco: apro la Terapia, tocca quello che hai preso.');
+  }
+  currentTab='terapia'; render({top:true});
+  return false;
+}
+
+function toggleMedsEdit(){ medsEdit=!medsEdit; render({top:true}); }
+function medRow(m){
+  const taken=STATE.today.meds&&STATE.today.meds[m.id];
+  const t=String(m.time_of_day||'').slice(0,5);
+  const dose=m.dose?' · '+esc(m.dose):'';
+  const right = taken
+    ? '<span class="badge ok">presa alle '+fmtTime(taken.taken_at)+'</span>'
+    : '<button class="btn small primary" onclick="logMedIntake(\u0027'+m.id+'\u0027)">Segna come presa</button>';
+  return '<div style="display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:12px 14px;margin-top:8px;'+(taken?'opacity:.7;':'')+'">'+
+    '<span class="mono" style="font-weight:600;font-size:13px;width:46px;flex-shrink:0;">'+t+'</span>'+
+    '<span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:14px;">'+esc(m.name)+'</span>'+
+    '<span style="display:block;font-size:12px;color:var(--inkSoft);">dose'+(m.dose?'':' non indicata')+dose+'</span></span>'+
+    right+'</div>';
+}
+function ScreenTerapia(){
+  const meds=STATE.meds||[];
+  const checkinDone=!!STATE.today.checkin;
+  const pendMorning=pendingMorningMeds();
+  // banner sull'ordine del mattino
+  let banner='';
+  if(meds.length){
+    if(pendMorning.length && !checkinDone){
+      banner='<div class="card" style="background:var(--warnSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:var(--warn);line-height:1.5;">☀️ Al mattino fai <b>prima il check-in</b>, poi prendi la terapia: così la misura della voce non è influenzata dai farmaci. <button class="btn small" style="margin-top:8px;" onclick="setTab(\u0027checkin\u0027)">Vai al check-in</button></div></div>';
+    } else if(pendMorning.length && checkinDone){
+      banner='<div class="card" style="background:var(--okSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:#1B4D33;line-height:1.5;">✓ Check-in fatto: ora puoi prendere la terapia del mattino e segnarla qui sotto.</div></div>';
+    }
+  }
+  // sezione "oggi"
+  let oggi;
+  if(!meds.length){
+    oggi='<div class="card" style="margin-top:12px;"><div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Nessun farmaco nel piano. Tocca <b>«Aggiungi terapia»</b> qui sotto: per ognuno indica nome, dose e orario. Riceverai un promemoria all\u2019orario impostato.</div></div>';
+  } else {
+    oggi=meds.map(medRow).join('');
+  }
+  // editor piano (mostrato solo in modalità modifica)
+  const planList = meds.length? meds.map(m=>
+    '<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--bg);">'+
+    '<span class="mono" style="font-size:12px;width:46px;flex-shrink:0;color:var(--inkSoft);">'+String(m.time_of_day||'').slice(0,5)+'</span>'+
+    '<span style="flex:1;min-width:0;font-size:13.5px;">'+esc(m.name)+(m.dose?' <span style="color:var(--inkSoft);">· '+esc(m.dose)+'</span>':'')+'</span>'+
+    (medsEdit?'<button class="btn small" onclick="delMed(\u0027'+m.id+'\u0027)" aria-label="Rimuovi" style="padding:5px 11px;">Rimuovi</button>':'')+'</div>').join('')
+    : '<div style="font-size:12.5px;color:var(--inkSoft);padding:4px 2px;">nessun farmaco nel piano</div>';
+
+  const cfgNote=(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)?'':'<div style="font-size:12px;color:var(--warn);margin-top:8px;line-height:1.5;">⚠ Backend non configurato: per salvare la terapia compila <span class="mono">config.js</span> (vedi SETUP.md).</div>';
+
+  const editor = medsEdit
+    ? '<div style="height:12px;"></div>'+
+      '<div style="font-size:12px;font-weight:700;color:var(--inkSoft);margin-bottom:2px;">Aggiungi farmaco</div>'+
+      '<div class="field" style="margin-top:8px;"><label for="medName">Nome</label><input type="text" id="medName" placeholder="es. Piridostigmina (Mestinon)" autocapitalize="words"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 110px;gap:10px;">'+
+        '<div class="field"><label for="medDose">Dose</label><input type="text" id="medDose" placeholder="es. 60 mg"></div>'+
+        '<div class="field"><label for="medTime">Orario</label><input type="time" id="medTime" value="08:00"></div>'+
+      '</div>'+
+      '<div id="medErr" style="font-size:12px;color:var(--alert);min-height:14px;margin:2px;"></div>'+
+      '<button class="btn primary full" onclick="addMedFromForm()">Aggiungi al piano</button>'+
+      cfgNote+
+      '<button class="btn full" style="margin-top:8px;" onclick="toggleMedsEdit()">Fine</button>'
+    : '<button class="btn full" style="margin-top:'+(meds.length?'12px':'4px')+';" onclick="toggleMedsEdit()">'+(meds.length?'Modifica terapia':'Aggiungi terapia')+'</button>';
+
+  return '<h2 style="font-size:21px;margin-top:10px;">Terapia</h2>'+
+  '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Il tuo piano e le assunzioni di oggi. I promemoria arrivano all\u2019orario di ciascun farmaco.</div>'+
+  banner+
+  '<div class="seclabel">Oggi</div>'+
+  oggi+
+  '<div class="seclabel">Piano terapeutico</div>'+
+  '<div class="card">'+planList+editor+'</div>'+
+  '<div class="card" style="margin-top:12px;background:var(--voiceSoft);box-shadow:none;padding:12px 15px;"><div style="font-size:12px;color:#14474E;line-height:1.55;">Horus non dà indicazioni cliniche sui farmaci (dosi, sospensioni, cambi): si limita a ricordarteli e a registrare ciò che hai concordato col tuo medico.</div></div>';
+}
+
+/* ============================================================
+   HORUS — assistente conversazionale (hub dell'app)
+   Dialoga in italiano, ricorda le attività del giorno e avvia le
+   funzioni dell'app eseguendo le "azioni" decise dall'Edge Function.
+   ============================================================ */
+const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null, live:'', discard:false,
+  routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false} };
+
+function horusAvatarSVG(){
+  // occhio di Horus stilizzato
+  return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 12c2.5-4 6-6 9-6s6.5 2 9 6c-2.5 4-6 6-9 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.7" fill="#fff"/><path d="M12 18c-1 1.6-1.4 3-1.2 4.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M16.5 16.8c1.6.2 2.7 1 3.3 2.4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>';
+}
+
+function buildChatContext(){
+  const en=SET.tests_enabled||{};
+  const labels={ptosi:'Test ptosi',conta:'Conta in un respiro',armdrift:'Arm drift'};
+  const tests=['ptosi','conta','armdrift'].filter(k=>en[k]).map(k=>({tipo:k,label:labels[k],done:!!STATE.today.tests[k]}));
+  // terapia di oggi
+  const meds=(STATE.meds||[]).map(m=>({name:m.name, dose:m.dose||'', time:String(m.time_of_day||'').slice(0,5), taken:medTakenToday(m.id)}));
+  const morningMedPending=pendingMorningMeds().length>0;
+  // "prima dei farmaci": se l'ora attuale è entro ~30' dal primo farmaco del mattino (dal piano, altrimenti SET.meds_time)
+  let beforeMeds=false;
+  try{
+    const now=new Date(); const [mh,mm]=firstMorningMedTime().split(':').map(Number);
+    beforeMeds = (now.getHours()*60+now.getMinutes()) <= (mh*60+mm+30);
+  }catch(_){}
+  return {
+    name:SET.first_name||fullName(SET)||'',
+    date_str:new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'}),
+    checkin_done:!!STATE.today.checkin,
+    checkin_time:SET.checkin_time,
+    before_meds_hint:beforeMeds,
+    tests, tests_time:SET.tests_time,
+    meds, morning_med_pending:morningMedPending,
+    last_index:STATE.lastIndex,
+    baseline_set:!!(lis.baseline&&lis.baseline.manual)||!!localStorage.getItem('mg_baseline_set'),
+    configured:(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)
+  };
+}
+
+/* esegue l'azione richiesta da Horus portando il paziente nel punto giusto */
+function dispatchHorus(action){
+  if(!action||!action.name) return;
+  switch(action.name){
+    case 'avvia_collana':    currentTab='ascolto'; break;
+    case 'registra_baseline':currentTab='ascolto'; break;   // la card del baseline è qui
+    case 'avvia_checkin':    chk.step=-1; chk.result=null; chk.sending=false;
+                             chk.beforeMeds=buildChatContext().before_meds_hint; currentTab='checkin'; break;
+    case 'avvia_test':       { const t=(action.input&&action.input.tipo)||'ptosi';
+                               testView=['ptosi','conta','armdrift'].includes(t)?t:'menu'; currentTab='test'; } break;
+    case 'apri_andamento':   currentTab='trend'; break;
+    case 'apri_terapia':     currentTab='terapia'; break;
+    case 'segna_terapia':    markTherapy(action.input||{}); return;   // gestisce navigazione e refresh
+    case 'apri_impostazioni':render(); openSettings(); return;   // overlay, niente cambio tab
+    default: return;
+  }
+  render({top:true});
+}
+
+/* etichetta breve per i pulsanti rapidi e per i messaggi locali */
+function actionLabel(name,tipo){
+  return ({avvia_collana:'la collana',avvia_checkin:'il check-in',registra_baseline:'la registrazione del baseline',
+    apri_andamento:"l'andamento",apri_terapia:'la terapia',segna_terapia:'la terapia come presa',apri_impostazioni:'le impostazioni',
+    avvia_test:({ptosi:'il test della ptosi',conta:'la conta in un respiro',armdrift:"l'arm drift"}[tipo]||'il test')}[name])||'';
+}
+
+async function chatSend(text,opts){
+  opts=opts||{};
+  if(chat.busy) return;
+  if(chat.routine && chat.routine.active){ routineStopListen(); chat.routine.active=false; }  // testo libero → esci dalla routine
+  if(text){ chat.msgs.push({role:'user',text:text}); }
+  chat.busy=true; chat.error=null; render();
+  // se non c'è backend, Horus funziona comunque in modalità locale
+  if(!SBOK){ chat.busy=false; localHorusReply(text,opts); render({bottom:true}); return; }
+  try{
+    const payload={ messages:chat.msgs.map(m=>({role:m.role,content:m.text})), context:buildChatContext(), opening:!!opts.opening };
+    const r=await fetch(MG_CONFIG.SUPABASE_URL+'/functions/v1/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':MG_CONFIG.SUPABASE_ANON_KEY,'Authorization':'Bearer '+MG_CONFIG.SUPABASE_ANON_KEY},
+      body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>({}));
+    chat.busy=false;
+    if(!r.ok || d.error){ chat.error=d.error||('Errore '+r.status); localHorusReply(text,opts); render({bottom:true}); return; }
+    if(d.reply){ chat.msgs.push({role:'assistant',text:d.reply, action:d.action||null}); say(d.reply); }
+    render({bottom:true});
+    if(d.action){ setTimeout(()=>dispatchHorus(d.action),520); }   // lascia leggere la frase prima di navigare
+  }catch(e){
+    chat.busy=false; chat.error='rete non raggiungibile'; localHorusReply(text,opts); render({bottom:true});
+  }
+}
+
+/* fallback senza backend / in caso di errore: discorsivo ma utile */
+function localHorusReply(text,opts){
+  const ctx=buildChatContext();
+  if(opts.opening || !text){
+    const pend=[]; if(!ctx.checkin_done) pend.push('il check-in');
+    ctx.tests.filter(t=>!t.done).forEach(t=>pend.push(t.label.toLowerCase()));
+    const hi='Ciao'+(ctx.name?' '+ctx.name:'')+'! Sono Horus.';
+    let body;
+    if(pend.length){
+      body=' Per oggi ti manca '+(pend.length>1?pend.slice(0,-1).join(', ')+' e '+pend.slice(-1):pend[0])+'.';
+      if(ctx.morning_med_pending) body+=' Poi, dopo il check-in, potrai prendere la terapia.';
+      body+=' Vuoi che cominciamo? Usa i pulsanti qui sotto.';
+    } else if(ctx.morning_med_pending){
+      body=' Il check-in è fatto: ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?';
+    } else {
+      body=' Per oggi sei in pari, complimenti. Se vuoi possiamo registrare un po\u2019 di voce o vedere l\u2019andamento.';
+    }
+    chat.msgs.push({role:'assistant',text:hi+body}); say(hi+body);
+    return;
+  }
+  { const t='Posso avviare per te la collana, il check-in MG-ADL, i test, la terapia o l\u2019andamento: scegli un pulsante qui sotto.'+(!SBOK?' (Sto funzionando in locale: collega Supabase per il dialogo completo.)':''); chat.msgs.push({role:'assistant',text:t}); say(t); }
+}
+
+/* dettatura per la chat */
+function chatMic(){
+  if(chat.listening){ try{chat.rec&&chat.rec.stop();}catch(_){ } return; }
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ toast('Dettatura non supportata qui: scrivi pure'); return; }
+  try{ MGVoice.cancel(); }catch(_){}
+  const rec=new SR(); rec.lang='it-IT'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+  let finalTxt='';
+  chat.discard=false; chat.live='';
+  rec.onresult=e=>{ let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; if(e.results[i].isFinal) finalTxt+=t; else interim+=t; }
+    const txt=(finalTxt+interim).trim(); chat.live=txt;
+    const big=document.getElementById('chatLiveBig'); if(big && txt){ big.textContent=txt; big.scrollTop=big.scrollHeight; }      // parole live, grandi, sempre in vista
+    const ta=document.getElementById('chatInput'); if(ta){ ta.value=txt; autoGrow(ta); chatClearSync(); }
+  };
+  rec.onend=()=>{ chat.listening=false;
+    if(chat.discard){ chat.discard=false; chat.live=''; render(); const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t);} return; }
+    render();
+    const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=((ta2.value&&ta2.value.trim())||chat.live||finalTxt).trim(); autoGrow(ta2); chatClearSync();} };
+  rec.onerror=e=>{ chat.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
+  chat.rec=rec; chat.listening=true; render();
+  try{ rec.start(); }catch(_){ chat.listening=false; render(); }
+}
+/* Annulla/cancella: ferma la dettatura ed elimina ciò che era stato inserito. */
+function chatMicCancel(){
+  chat.discard=true; chat.live='';
+  const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t); }
+  if(chat.listening){ try{chat.rec&&chat.rec.stop();}catch(_){ } }
+  else render();
+}
+function autoGrow(ta){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
+function chatClearSync(){ const b=document.getElementById('chatClearBtn'), ta=document.getElementById('chatInput'); if(b&&ta) b.style.display=(ta.value&&ta.value.trim())?'grid':'none'; }
+function chatClear(){ const ta=document.getElementById('chatInput'); if(ta){ ta.value=''; autoGrow(ta); ta.focus(); } chat.live=''; chatClearSync(); }
+function chatSubmitFromInput(){
+  const ta=document.getElementById('chatInput'); if(!ta) return;
+  const v=ta.value.trim(); if(!v) return;
+  ta.value=''; autoGrow(ta);
+  if(chat.listening){ try{chat.rec&&chat.rec.stop();}catch(_){} }
+  chatSend(v);
+}
+function chatKey(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); chatSubmitFromInput(); } }
+
+/* pulsante rapido: esegue l'azione e annota il dialogo (affidabile, senza modello) */
+function chip(name,tipo){
+  // toccare un'azione interrompe l'avvio guidato: l'utente sceglie liberamente
+  if(chat.routine){ chat.routine.active=false; routineStopListen(); }
+  const label=actionLabel(name,tipo);
+  let userText, botText;
+  if(name==='segna_terapia'){ userText='Ho preso la terapia'; botText='Perfetto, la segno come presa.'; }
+  else if(name==='apri_terapia'){ userText='Apri la terapia'; botText='Apro la pagina della terapia.'; }
+  else if(name==='apri_andamento'){ userText='Mostrami l\u2019andamento'; botText='Ecco l\u2019andamento.'; }
+  else { userText='Avvia '+label; botText='Va bene, apro '+label+'.'; }
+  chat.msgs.push({role:'user',text:userText});
+  pushBot(botText);
+  render({bottom:true});
+  setTimeout(()=>dispatchHorus({name:name,input:tipo?{tipo:tipo}:{}}),360);
+}
+
+/* ============================================================
+   AVVIO GUIDATO — routine vocale DETERMINISTICA (niente modello)
+   All'apertura Horus legge a voce le domande del mattino (check-in,
+   test, terapia) e ascolta un "sì/no". Se la risposta non è
+   classificabile, passa la parola alla chat AI.
+   ============================================================ */
+function pushBot(t,opts){ opts=opts||{}; chat.msgs.push({role:'assistant',text:t}); if(!opts.silent) say(t,opts.onend); }
+function pushUser(t){ chat.msgs.push({role:'user',text:t}); }
+
+/* lettura vocale dei messaggi generati (attiva salvo "muta" = SET.tts false).
+   NON annulla la voce in corso: i messaggi si accodano in ordine. */
+function say(text,onend){
+  MGVoice.speak(text, {onend});
+}
+function toggleHorusMute(){
+  SET.tts=!SET.tts; saveSettings();
+  if(!SET.tts){ MGVoice.cancel(); }
+  toast(SET.tts?'Voce attiva':'Voce disattivata');
+  render();
+}
+
+function routineSteps(){
+  const s=[];
+  if(!STATE.today.checkin) s.push('checkin');
+  const en=SET.tests_enabled||{};
+  if(['ptosi','conta','armdrift'].some(k=>en[k] && !STATE.today.tests[k])) s.push('tests');
+  if(pendingMorningMeds().length) s.push('therapy');
+  return s;
+}
+function routinePrompt(step){
+  if(step==='checkin') return 'Vuoi fare il check-in di oggi adesso? Rispondi sì o no.';
+  if(step==='tests'){
+    const en=SET.tests_enabled||{}, L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
+    const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]).map(k=>L[k]);
+    return 'Vuoi eseguire ora '+(p.length>1?'i test ('+p.join(', ')+')':'il test della '+p[0])+'? Sì o no.';
+  }
+  if(step==='therapy') return 'Hai già preso la terapia di stamattina? Sì o no.';
+  return '';
+}
+function startRoutine(){
+  const nm=SET.first_name?' '+SET.first_name:'';
+  chat.routine.steps=routineSteps(); chat.routine.step=0; chat.routine.armed=false;
+  if(!chat.routine.steps.length){
+    chat.routine.active=false; chat.routine.done=true;
+    pushBot('Ciao'+nm+'! Per oggi sei in pari. Se ti serve qualcosa — vedere l\u2019andamento, registrare la voce o altro — chiedimi pure a voce o per iscritto.');
+    render({bottom:true}); return;
+  }
+  chat.routine.active=true; chat.routine.done=false;
+  pushBot('Ciao'+nm+'! Sono Horus, facciamo un rapido punto della mattina.');
+  routineAsk();
+}
+function routineAsk(){
+  const q=routinePrompt(chat.routine.steps[chat.routine.step]);
+  pushBot(q, {onend: ()=>{ if(chat.routine.active && chat.routine.armed && !chat.routine.listening) routineListen(); }});
+  render({bottom:true});
+}
+function routineStopListen(){ try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; }
+function routineListen(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ chat.routine.armed=false; toast('Riconoscimento vocale non disponibile: usa i pulsanti'); render(); return; }
+  if(chat.routine.listening) return;
+  try{ MGVoice.cancel(); }catch(_){}
+  const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
+  let txt='';
+  rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
+  rec.onerror=e=>{ chat.routine.listening=false; if(e.error==='not-allowed'||e.error==='service-not-allowed') chat.routine.armed=false; render(); };
+  rec.onend=()=>{ chat.routine.listening=false; render(); const t=txt.trim(); if(t) routineHeard(t); };
+  chat.routine.rec=rec; chat.routine.listening=true; chat.routine.armed=true; render();
+  try{ rec.start(); }catch(_){ chat.routine.listening=false; chat.routine.armed=false; render(); }
+}
+function routineYesNo(t){
+  const s=' '+t.toLowerCase().replace(/[\u2019\u0027]/g,' ').replace(/[.,!?;:]/g,' ').replace(/\s+/g,' ')+' ';
+  const yes=[' si ',' sì ',' certo ',' certamente ',' va bene ',' ok ',' okay ',' volentieri ',' yes ',' esatto ',' assolutamente ',' sicuro ',' fatto ',' fatta ',' presa ',' preso ',' presi '];
+  const no=[' no ',' nope ',' non ancora ',' più tardi ',' piu tardi ',' dopo ',' non adesso ',' non ora ',' magari dopo ',' negativo ',' non l ho ',' non lo ho ',' non ho ancora '];
+  const y=yes.some(w=>s.includes(w)), n=no.some(w=>s.includes(w));
+  if(y&&!n) return 'yes';
+  if(n&&!y) return 'no';
+  return null;
+}
+function routineHeard(t){
+  const v=routineYesNo(t);
+  if(v){ pushUser(t); routineAnswer(v); }
+  else { chat.routine.active=false; render(); chatSend(t); }   // non capito → AI
+}
+async function markMorningMedsTaken(){
+  if(!SBOK||!PID) return;
+  const pend=pendingMorningMeds(); if(!pend.length) return;
+  try{
+    const rows=pend.map(m=>({patient_id:PID, medication_id:m.id, name:m.name, dose:m.dose||null,
+      taken_at:new Date().toISOString(), taken_on:todayISO(), source:'app'}));
+    await sb.from('med_intakes').insert(rows); await refreshData();
+  }catch(e){ console.warn('markMorningMeds',e); }
+}
+function routineOpenTests(){
+  const en=SET.tests_enabled||{};
+  const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]);
+  if(p.length===1) dispatchHorus({name:'avvia_test', input:{tipo:p[0]}});
+  else { testView='menu'; currentTab='test'; render({top:true}); }
+}
+function routineAnswer(value){
+  routineStopListen();
+  const step=chat.routine.steps[chat.routine.step];
+  if(step==='checkin'){
+    if(value==='yes'){ pushBot('Perfetto, apro il check-in.'); chat.routine.active=false; say('Apro il check-in.'); dispatchHorus({name:'avvia_checkin'}); return; }
+    pushBot('Va bene, lo farai più tardi.');
+  } else if(step==='tests'){
+    if(value==='yes'){ pushBot('Apro i test.'); chat.routine.active=false; say('Apro i test.'); routineOpenTests(); return; }
+    pushBot('Va bene, magari più tardi.');
+  } else if(step==='therapy'){
+    if(value==='yes'){ markMorningMedsTaken(); pushBot('Ottimo, ho segnato la terapia come presa. ✓'); }
+    else { pushBot('Va bene. Ora che hai fatto le misure puoi prenderla: quando l\u2019hai presa dimmelo e la segno.'); }
+  }
+  routineNext();
+}
+function routineNext(){
+  chat.routine.step++;
+  if(chat.routine.step>=chat.routine.steps.length){
+    chat.routine.active=false; chat.routine.done=true;
+    pushBot('Tutto qui per ora. Per qualsiasi altra cosa — andamento, voce, domande — chiedimi pure a voce o scrivendo.');
+    render({bottom:true}); return;
+  }
+  routineAsk();
+}
+
+function ScreenHorus(){
+  const ctx=buildChatContext();
+  const idx=STATE.lastIndex;
+  const idxPill = idx!=null
+    ? '<span class="pill" style="color:'+(idx>=85?'var(--alert)':idx>=70?'var(--warn)':'var(--ok)')+';">indice '+Math.round(idx)+'</span>'
+    : '';
+  const medsTotal=(STATE.meds||[]).length;
+  const medsDone=(STATE.meds||[]).filter(m=>medTakenToday(m.id)).length;
+  const pendCount=(ctx.checkin_done?0:1)+ctx.tests.filter(t=>!t.done).length+(medsTotal-medsDone);
+  const totCount=1+ctx.tests.length+medsTotal;
+  const doneCount=totCount-pendCount;
+  const progPill='<span class="pill">oggi '+doneCount+'/'+totCount+'</span>';
+
+  // thread
+  let thread='';
+  for(const m of chat.msgs){
+    thread += m.role==='user'
+      ? '<div class="bubble me">'+esc(m.text)+'</div>'
+      : '<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;flex-shrink:0;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;">'+esc(m.text)+'</div></div>';
+  }
+  if(chat.busy) thread+='<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;padding:4px 6px;"><div class="typing"><span></span><span></span><span></span></div></div></div>';
+  if(chat.error) thread+='<div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;text-align:center;">Horus è in modalità locale ('+esc(chat.error)+').</div>';
+
+  // chip azioni: prima i pendenti, poi sempre-disponibili
+  let chips='';
+  if(!ctx.checkin_done) chips+='<button class="chip primary" onclick="chip(\u0027avvia_checkin\u0027)">📋 Check-in</button>';
+  ctx.tests.filter(t=>!t.done).forEach(t=>{
+    const emo=t.tipo==='ptosi'?'👁️':t.tipo==='conta'?'🫁':'💪';
+    chips+='<button class="chip primary" onclick="chip(\u0027avvia_test\u0027,\u0027'+t.tipo+'\u0027)">'+emo+' '+esc(t.label)+'</button>';
+  });
+  // terapia: se c'è da prendere e il check-in è fatto → segna; altrimenti apri la pagina
+  const medsPending=pendingMeds().length>0;
+  if(medsPending && ctx.checkin_done) chips+='<button class="chip primary" onclick="chip(\u0027segna_terapia\u0027)">💊 Prendi terapia</button>';
+  else chips+='<button class="chip" onclick="chip(\u0027apri_terapia\u0027)">💊 Terapia</button>';
+  chips+='<button class="chip" onclick="chip(\u0027avvia_collana\u0027)">🎙️ Collana</button>';
+  chips+='<button class="chip" onclick="chip(\u0027apri_andamento\u0027)">📈 Andamento</button>';
+  if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>'+chips;
+
+  // avvio guidato: i controlli vocali del passo corrente si AGGIUNGONO ai chip,
+  // così i test (e ogni altra azione) restano sempre toccabili anche durante la routine
+  if(chat.routine && chat.routine.active){
+    const lisn=chat.routine.listening;
+    const ctl =
+      '<button class="chip primary" onclick="'+(lisn?'routineStopListen()':'routineListen()')+'">'+
+        (lisn?'🔴 Sto ascoltando… tocca per fermare':'🎤 Rispondi a voce')+'</button>'+
+      '<button class="chip" onclick="routineAnswer(\u0027yes\u0027)">Sì</button>'+
+      '<button class="chip" onclick="routineAnswer(\u0027no\u0027)">No</button>';
+    chips = ctl + chips;
+  }
+
+  const micEnabled=sttSupported();
+  return '<div class="horuswrap">'+
+    '<div class="horushead">'+
+      '<div class="horusav'+(chat.busy?' think':'')+'" id="horusAv">'+horusAvatarSVG()+'</div>'+
+      '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:17px;">Horus</div>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);">assistente per il monitoraggio · sperimentale</div></div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">'+
+        '<button onclick="toggleHorusMute()" aria-label="'+(SET.tts?'Disattiva voce':'Attiva voce')+'" title="'+(SET.tts?'Voce attiva (tocca per mutare)':'Voce disattivata (tocca per attivare)')+'" style="all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:'+(SET.tts?'var(--voice)':'var(--inkSoft)')+';background:var(--card);">'+
+          (SET.tts
+            ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+            : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="m16 9 5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')+
+        '</button>'+idxPill+progPill+'</div>'+
+    '</div>'+
+    '<div class="chatscroll" id="chatScroll">'+
+      (thread||'')+
+      '<div class="chips">'+chips+'</div>'+
+    '</div>'+
+    (chat.listening?
+      '<div class="liveoverlay">'+
+        '<div class="livedot"><svg width="34" height="34" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="#fff"/></svg></div>'+
+        '<div class="livewords" id="chatLiveBig">'+(chat.live?esc(chat.live):'<span class="livehint">Parla pure… ti ascolto</span>')+'</div>'+
+        '<div class="liverow">'+
+          '<button class="btn" onclick="chatMicCancel()">Annulla</button>'+
+          '<button class="btn voice" onclick="chatMic()">Fatto</button>'+
+        '</div>'+
+      '</div>'
+    :'')+
+    '<div class="composer">'+
+      '<textarea id="chatInput" rows="1" placeholder="Scrivi a Horus…" oninput="autoGrow(this);chatClearSync()" onkeydown="chatKey(event)"></textarea>'+
+      '<button class="cbtn clear" id="chatClearBtn" onclick="chatClear()" aria-label="Cancella il testo" title="Cancella" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>'+
+      (micEnabled?'<button class="cbtn mic'+(chat.listening?' live':'')+'" onclick="chatMic()" aria-label="Parla">'+
+        (chat.listening?'<svg width="18" height="18" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="#fff"/></svg>':'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>')+'</button>':'')+
+      '<button class="cbtn send" onclick="chatSubmitFromInput()" aria-label="Invia"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 12h14M12 5l7 7-7 7" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'+
+    '</div>'+
+  '</div>';
+}
+
+/* ---------------- onboarding: nome e cognome al primo accesso ---------------- */
+function needsOnboarding(){ return !SET.onboarded || !fullName(SET); }
+function showOnboarding(){
+  const r=document.getElementById('onboardRoot'); if(!r) return;
+  r.innerHTML=
+  '<div class="modal" style="align-items:flex-start;">'+
+    '<div class="sheet" style="max-width:440px;margin-top:0;">'+
+      '<div style="text-align:center;padding-top:6px;">'+
+        '<div class="pendant idle" style="width:96px;height:96px;margin:4px auto 10px;"><div class="rw"></div><div class="rw r2" style="inset:10px;"></div><div class="rw r3" style="inset:20px;"></div><div class="core" style="inset:28px;"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 3c0 5 3.5 7 8 7s8-2 8-7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><rect x="9" y="10.5" width="6" height="9" rx="3" fill="#fff"/><path d="M7.2 15.5a4.8 4.8 0 0 0 9.6 0" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></div></div>'+
+        '<h2 style="font-size:22px;">Benvenuto in '+esc(typeof MG_CONFIG!=='undefined'?MG_CONFIG.APP_NAME:'Horus')+'</h2>'+
+        '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">Per personalizzare il monitoraggio, dicci come ti chiami. Il nome resta associato a questo dispositivo e accompagna i dati condivisi con il tuo medico.</div>'+
+      '</div>'+
+      '<div class="field" style="margin-top:18px;"><label for="obFirst">Nome</label><input type="text" id="obFirst" value="'+esc(SET.first_name)+'" placeholder="es. Maria" autocomplete="given-name" autocapitalize="words" oninput="document.getElementById(\u0027obErr\u0027).textContent=\u0027\u0027"></div>'+
+      '<div class="field"><label for="obLast">Cognome</label><input type="text" id="obLast" value="'+esc(SET.last_name)+'" placeholder="es. Rossi" autocomplete="family-name" autocapitalize="words" oninput="document.getElementById(\u0027obErr\u0027).textContent=\u0027\u0027"></div>'+
+      '<div id="obErr" style="font-size:12.5px;color:var(--alert);min-height:16px;margin:2px 2px 0;"></div>'+
+      '<button class="btn voice full" style="margin-top:8px;" onclick="finishOnboarding()">Inizia</button>'+
+      (!(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)?'<div style="font-size:11.5px;color:var(--inkSoft);line-height:1.5;margin-top:12px;text-align:center;">Backend non ancora configurato: il nome viene salvato sul dispositivo e sincronizzato appena colleghi Supabase.</div>':'<div style="font-size:11.5px;color:var(--inkSoft);line-height:1.5;margin-top:12px;text-align:center;">Potrai modificarlo in qualunque momento dalle impostazioni.</div>')+
+    '</div>'+
+  '</div>';
+  setTimeout(()=>{ const f=document.getElementById('obFirst'); if(f) f.focus(); },50);
+}
+function closeOnboarding(){ const r=document.getElementById('onboardRoot'); if(r) r.innerHTML=''; }
+/* ---------------- primo accesso: scelta della voce di Horus ---------------- */
+let _voiceAskDone=null;
+function askVoiceDownload(done){
+  _voiceAskDone=done||function(){};
+  if(SET.voiceAsked){ const d=_voiceAskDone; _voiceAskDone=null; d(); return; }
+  const r=document.getElementById('onboardRoot');
+  if(!r){ const d=_voiceAskDone; _voiceAskDone=null; d(); return; }
+  r.innerHTML=
+  '<div class="modal" style="align-items:flex-start;"><div class="sheet" style="max-width:440px;margin-top:0;">'+
+    '<div style="text-align:center;padding-top:6px;">'+
+      '<div class="pendant idle" style="width:84px;height:84px;margin:4px auto 10px;"><div class="rw"></div><div class="rw r2" style="inset:9px;"></div><div class="rw r3" style="inset:18px;"></div><div class="core" style="inset:25px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="#fff"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></div></div>'+
+      '<h2 style="font-size:21px;">La voce di Horus</h2>'+
+      '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">Vuoi attivare la <b>voce naturale</b> di Horus? Si scarica una sola volta un modello (~82 MB), poi funziona <b>offline</b> e il testo non lascia il dispositivo. In alternativa uso la <b>voce di sistema</b> del telefono (gratis, nessun download).</div>'+
+    '</div>'+
+    '<button class="btn voice full" style="margin-top:16px;" onclick="voicePick(\u0027kokoro\u0027)">Sì, scarica la voce naturale (~82 MB)</button>'+
+    '<button class="btn full" style="margin-top:10px;" onclick="voicePick(\u0027system\u0027)">No, usa la voce di sistema</button>'+
+    '<div style="font-size:11.5px;color:var(--inkSoft);text-align:center;margin-top:12px;line-height:1.45;">Puoi cambiare quando vuoi da Impostazioni → Voce dell\u2019assistente.</div>'+
+  '</div></div>';
+}
+function voicePick(choice){
+  SET.voiceAsked=true;
+  if(choice==='kokoro') SET.voiceMode='kokoro';
+  saveSettings();
+  const r=document.getElementById('onboardRoot'); if(r) r.innerHTML='';
+  if(choice==='kokoro' && typeof MGVoice!=='undefined') MGVoice.prepare();
+  const d=_voiceAskDone; _voiceAskDone=null; if(typeof d==='function') d();
+}
+
+async function finishOnboarding(){
+  const f=(document.getElementById('obFirst').value||'').trim();
+  const l=(document.getElementById('obLast').value||'').trim();
+  if(!f || !l){ document.getElementById('obErr').textContent='Inserisci sia il nome sia il cognome.'; return; }
+  SET.first_name=f; SET.last_name=l; SET.onboarded=true; SET.name=fullName(SET);
+  saveSettings();
+  closeOnboarding();
+  currentTab='horus';
+  render({top:true});
+  if(SBOK){ await ensurePatient(); await refreshData(); }
+  askVoiceDownload(()=>{ if(typeof openHorus==='function') openHorus(); });
+}
+
+/* ---------------- navigazione, ambiente, avvio ---------------- */
+const TABS=[
+  {id:'horus',  label:'Horus',   fn:ScreenHorus,   icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 12c2.4-3.6 5.6-5.5 9-5.5s6.6 1.9 9 5.5c-2.4 3.6-5.6 5.5-9 5.5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 17.5c-.7 1.3-1 2.4-.9 3.5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>'},
+  {id:'ascolto',label:'Collana', fn:ScreenAscolto, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 3c0 4.5 3 6.5 7 6.5S19 7.5 19 3" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><circle cx="12" cy="14.5" r="4.5" stroke="currentColor" stroke-width="2.1"/><circle cx="12" cy="14.5" r="1.4" fill="currentColor"/></svg>'},
+  {id:'checkin',label:'Check-in',fn:ScreenCheckin, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-4.2 3.4c-.4.3-.8 0-.8-.5z" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/></svg>'},
+  {id:'test',   label:'Test',    fn:ScreenTest,    icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 13h4l2.5-6 4 11 2.5-5h5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>'},
+  {id:'terapia',label:'Terapia', fn:ScreenTerapia, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5.5 13.5 13 6a4.6 4.6 0 0 1 6.5 6.5L12 20a4.6 4.6 0 0 1-6.5-6.5Z" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/><path d="m8.7 10.3 5 5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>'},
+  {id:'trend',  label:'Trend',   fn:ScreenTrend,   icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="m7 14 3.5-4 3 2.5L18 7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'}
+];
+let currentTab='horus';
+function setTab(id){
+  if(currentTab==='test' && id!=='test') stopAllTests();
+  if(id!=='terapia') medsEdit=false;       // la terapia si riapre in sola lettura
+  if(id!=='test') pendingExtra=null;        // annulla una conferma extra in sospeso
+  if(currentTab==='ascolto' && id!=='ascolto' && lis.phase==='running'){
+    if(lis.baselineMode){ freeMic(); lis.phase='idle'; lis.baselineMode=false; toast('Registrazione del baseline interrotta'); }
+    else lisStop();
+  }
+  currentTab=id; render({top:true});
+}
+function render(opts){
+  opts=opts||{};
+  const scr=document.getElementById('screen');
+  const keep=opts.top?0:scr.scrollTop;
+  // preserva la posizione di scroll della chat di Horus tra i re-render (es. tasto muta)
+  let csPrev=0, csBottom=true;
+  if(currentTab==='horus'){ const cs0=document.getElementById('chatScroll'); if(cs0){ csPrev=cs0.scrollTop; csBottom=(cs0.scrollHeight-cs0.scrollTop-cs0.clientHeight)<40; } }
+  const tab=TABS.find(t=>t.id===currentTab)||TABS[0];
+  scr.innerHTML=tab.fn();
+  scr.scrollTop=keep;
+  // la chat di Horus cresce verso il basso: resta in fondo se eri in fondo, altrimenti mantiene la posizione
+  if(currentTab==='horus'){
+    const cs=document.getElementById('chatScroll');
+    if(cs) cs.scrollTop=(opts.bottom||opts.top||csBottom)?cs.scrollHeight:csPrev;
+  }
+  document.getElementById('nav').innerHTML=TABS.map(t=>
+    '<button class="'+(t.id===currentTab?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
+    '<span class="ic">'+t.icon+'</span>'+t.label+'</button>').join('');
+  if(chat.opened){ saveHorusSession(); }   // persistenza del thread (per non rifare il saluto a ogni apertura)
+}
+function envCheck(){
+  const probs=[];
+  if(!window.isSecureContext) probs.push('Pagina non in <b>https</b>: microfono, fotocamera e notifiche sono bloccati dal browser.');
+  if(!(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)) probs.push('Backend non configurato: compila <span class="mono">config.js</span> (vedi SETUP.md).');
+  document.getElementById('envDiag').innerHTML=probs.length?
+    '<div style="margin:0 max(16px,calc(50% - 280px));"><div class="card" style="padding:11px 14px;background:var(--warnSoft);box-shadow:none;font-size:12px;color:var(--warn);line-height:1.5;">'+probs.join('<br>')+'</div></div>':'';
+}
+function handleParams(qs){
+  const p=new URLSearchParams(qs||location.search);
+  if(p.get('checkin')==='1'){ currentTab='checkin'; }
+  else if(p.get('tests')==='1'){ currentTab='test'; }
+  else if(p.get('therapy')==='1'){ currentTab='terapia'; }
+}
+let horusOpened=false;
+async function openHorus(){
+  if(horusOpened) return; horusOpened=true;
+  chat.opened=true;
+  // a ogni apertura dell'app: saluta di nuovo e parla SOLO dei pendenti (voce + testo),
+  // senza ripristinare l'intera conversazione precedente.
+  chat.msgs=[];
+  chat.routine.active=false; chat.routine.done=false;
+  startRoutine();
+}
+async function init(){
+  if(typeof MG_CONFIG!=='undefined') {
+    document.getElementById('brandName').textContent=MG_CONFIG.APP_NAME;
+    document.title=MG_CONFIG.APP_NAME+' · monitoraggio vocale della miastenia gravis';
+  }
+  // chi aveva già un nome da una versione precedente non rivede l'onboarding
+  if(!SET.onboarded && fullName(SET)){ SET.onboarded=true; saveSettings(); }
+  envCheck();
+  initSupabase();
+  handleParams();
+  render({top:true});
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+    navigator.serviceWorker.addEventListener('message',e=>{
+      if(e.data&&e.data.type==='open-url'){
+        try{ handleParams(new URL(e.data.url).search); render({top:true}); }catch(_){}
+      }
+    });
+  }
+  if(needsOnboarding()){
+    showOnboarding();
+    return;   // la riga paziente viene creata da finishOnboarding(), col nome
+  }
+  if(SBOK){ await ensurePatient(); await refreshData(); }
+  askVoiceDownload(openHorus);
+}
+init();
+</script>
+</body>
+</html>
