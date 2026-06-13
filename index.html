@@ -107,7 +107,7 @@
   .dots span.cur{background:var(--primary);transform:scale(1.25);}
 
   /* ---------- Horus (assistente) ---------- */
-  .horuswrap{display:flex;flex-direction:column;height:100%;}
+  .horuswrap{display:flex;flex-direction:column;height:100%;position:relative;}
   .horushead{display:flex;align-items:center;gap:12px;padding:2px 2px 12px;}
   .horusav{width:46px;height:46px;border-radius:999px;background:linear-gradient(135deg,var(--voice),var(--primary));display:grid;place-items:center;flex-shrink:0;box-shadow:0 6px 16px rgba(31,110,120,.32);}
   .horusav.think{animation:mgPulse 1.4s ease-in-out infinite;}
@@ -126,6 +126,12 @@
   .composer .cbtn{width:44px;height:44px;border-radius:999px;border:none;display:grid;place-items:center;flex-shrink:0;color:#fff;}
   .composer .cbtn.mic{background:var(--voice);} .composer .cbtn.mic.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
   .composer .cbtn.send{background:var(--primary);} .composer .cbtn.send:disabled{background:var(--line);}
+  .composer .cbtn.mic{width:56px;height:56px;}   /* pulsante per registrare, più grande */
+  .liveoverlay{position:absolute;inset:0;z-index:40;background:rgba(238,243,238,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
+  .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.35);animation:mgPulse 1.3s ease-in-out infinite;}
+  .liveoverlay .livewords{font-size:27px;line-height:1.32;font-weight:600;color:var(--ink);max-height:42vh;overflow-y:auto;min-height:42px;width:100%;}
+  .liveoverlay .livehint{color:var(--inkSoft);font-weight:500;font-size:18px;}
+  .liveoverlay .liverow{display:flex;gap:12px;}
 
   /* ---------- impostazioni ---------- */
   .modal{position:fixed;inset:0;background:rgba(27,58,42,.35);display:grid;place-items:end center;z-index:50;}
@@ -200,7 +206,7 @@ function initSupabase(){
 const DEF_SET={first_name:'', last_name:'', name:'', onboarded:false,
   code:'', checkin_time:'07:30', tests_time:'18:00', meds_time:'08:00',
   tests_enabled:{ptosi:true,conta:true,armdrift:true},
-  tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT};
+  tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT, voiceMode:'system', voiceAsked:false};
 let SET=loadSettings();
 function loadSettings(){
   try{ const s=JSON.parse(localStorage.getItem('mg_settings')||'null');
@@ -691,21 +697,132 @@ function chkBegin(){
   render({top:true});
   speakQ();
 }
+/* ============================================================
+   MGVoice — voce unificata
+     • SET.voiceMode = 'system'  -> sintesi del dispositivo (gratis, peso zero, offline)
+     • SET.voiceMode = 'kokoro'  -> modello neurale on-device Kokoro (im_nicola, ~82 MB)
+   Il resto dell'app usa solo MGVoice.speak()/cancel(): non sa quale motore è attivo.
+   In 'kokoro', finché il modello non è pronto si parla con la voce di sistema, così
+   l'assistente non resta muto durante il download; ogni errore ricade sul sistema.
+   ============================================================ */
+const MGVoice = (function(){
+  /* ---------- livello 1: voce di sistema ---------- */
+  const SYS_RATE=0.97, SYS_PITCH=0.96;     // un filo più calda/profonda
+  const MALE_HINTS=['diego','giuseppe','calogero','cosimo','luca','giorgio','marco','carlo','paolo','nicola','gianni','roberto','federico'];
+  const QUALITY_HINTS=['natural','neural','enhanced','premium','online','siri'];
+  function italianVoices(){
+    try{ return (speechSynthesis.getVoices()||[]).filter(v=>/^it(-|_|$)/i.test(v.lang||'')); }catch(_){ return []; }
+  }
+  function pickVoice(){
+    const it=italianVoices(); if(!it.length) return null;
+    const score=v=>{ const n=(v.name||'').toLowerCase(); let s=0;
+      if(MALE_HINTS.some(h=>n.includes(h))) s+=4;
+      if(QUALITY_HINTS.some(h=>n.includes(h))) s+=2;
+      if(/it[-_]IT/i.test(v.lang||'')) s+=1; return s; };
+    return it.slice().sort((a,b)=>score(b)-score(a))[0];
+  }
+  function sysSpeak(text,onend){
+    try{
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang='it-IT'; u.rate=SYS_RATE; u.pitch=SYS_PITCH;
+      const v=pickVoice(); if(v) u.voice=v;
+      if(onend){ u.onend=u.onerror=()=>{ try{onend();}catch(_){} }; }
+      speechSynthesis.speak(u); return true;
+    }catch(_){ if(onend) setTimeout(onend,60); return false; }
+  }
+  try{ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>{ try{speechSynthesis.getVoices();}catch(_){} }; } }catch(_){}
+
+  /* ---------- livello 2: Kokoro on-device ---------- */
+  const KOKORO_LIB='https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
+  const KOKORO_MODEL='onnx-community/Kokoro-82M-v1.0-ONNX';
+  const KOKORO_VOICE='im_nicola';            // italiano maschile
+  let kSt='idle';                            // idle | loading | ready | failed
+  let kTTS=null, kLoading=null, kQueue=[], kBusy=false, kAudio=null;
+  const hasWebGPU=()=> typeof navigator!=='undefined' && !!navigator.gpu;
+  function floatToWav(samples,sr){
+    const n=samples.length, buf=new ArrayBuffer(44+n*2), dv=new DataView(buf);
+    const wr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
+    wr(0,'RIFF'); dv.setUint32(4,36+n*2,true); wr(8,'WAVE'); wr(12,'fmt ');
+    dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,1,true);
+    dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true); dv.setUint16(32,2,true); dv.setUint16(34,16,true);
+    wr(36,'data'); dv.setUint32(40,n*2,true);
+    let o=44; for(let i=0;i<n;i++){ const s=Math.max(-1,Math.min(1,samples[i])); dv.setInt16(o,s<0?s*0x8000:s*0x7FFF,true); o+=2; }
+    return new Blob([buf],{type:'audio/wav'});
+  }
+  function ensureKokoro(){
+    if(kSt==='ready') return Promise.resolve(kTTS);
+    if(kLoading) return kLoading;
+    kSt='loading';
+    if(typeof toast==='function') toast('Voce naturale: scarico il modello (~82 MB, una volta sola)…');
+    kLoading=(async()=>{
+      const mod=await import(KOKORO_LIB);
+      const KokoroTTS=mod.KokoroTTS||(mod.default&&mod.default.KokoroTTS);
+      if(!KokoroTTS) throw new Error('kokoro-js non disponibile');
+      const load=(device)=>KokoroTTS.from_pretrained(KOKORO_MODEL,{dtype:'q8',device});
+      try{ kTTS=await load(hasWebGPU()?'webgpu':'wasm'); }
+      catch(_){ kTTS=await load('wasm'); }   // ripiego su WASM se WebGPU non parte
+      kSt='ready';
+      if(typeof toast==='function') toast('Voce naturale pronta');
+      return kTTS;
+    })();
+    kLoading.catch(()=>{ kSt='failed'; kLoading=null; if(typeof toast==='function') toast('Voce naturale non disponibile: uso la voce di sistema'); });
+    return kLoading;
+  }
+  async function kProcess(){
+    if(kBusy) return;
+    const item=kQueue.shift(); if(!item) return;
+    kBusy=true;
+    try{
+      const out=await kTTS.generate(item.text,{voice:KOKORO_VOICE});
+      let blob;
+      if(out && typeof out.toBlob==='function') blob=out.toBlob();
+      else blob=floatToWav(out.audio||out.waveform||[], out.sampling_rate||out.sampleRate||24000);
+      const url=URL.createObjectURL(blob);
+      kAudio=new Audio(url);
+      kAudio.onended=kAudio.onerror=()=>{ try{URL.revokeObjectURL(url);}catch(_){} kAudio=null; kBusy=false; try{item.onend&&item.onend();}catch(_){} kProcess(); };
+      await kAudio.play().catch(()=>{ if(kAudio&&kAudio.onended) kAudio.onended(); });
+    }catch(_){
+      kBusy=false;
+      sysSpeak(item.text, ()=>{ try{item.onend&&item.onend();}catch(_){} kProcess(); });  // fallback per questo pezzo
+    }
+  }
+  function kCancel(){
+    kQueue=[];
+    if(kAudio){ try{kAudio.pause();}catch(_){} try{kAudio.src='';}catch(_){} kAudio=null; }
+    kBusy=false;
+  }
+
+  /* ---------- API unificata ---------- */
+  function speak(text,opts){
+    opts=opts||{};
+    if(!text || !SET.tts){ if(opts.onend) setTimeout(opts.onend,40); return; }
+    if(opts.cancelFirst) cancel();
+    if(SET.voiceMode==='kokoro'){
+      if(kSt==='ready'){ kQueue.push({text,onend:opts.onend}); kProcess(); return; }
+      ensureKokoro();                       // avvia/continua il download
+      sysSpeak(text,opts.onend);            // intanto parla la voce di sistema
+      return;
+    }
+    sysSpeak(text,opts.onend);
+  }
+  function cancel(){
+    try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(_){}
+    kCancel();
+  }
+  function prepare(){ if(SET.voiceMode==='kokoro') ensureKokoro(); }   // front-load del modello
+  return { speak, cancel, prepare, pickVoice, get state(){ return kSt; } };
+})();
+
 function speakQ(){
-  if(!SET.tts || !('speechSynthesis' in window) || chk.step<0 || chk.step>=CHK_Q.length) return;
-  try{
-    speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(CHK_Q[chk.step].q);
-    u.lang='it-IT'; u.rate=1;
-    speechSynthesis.speak(u);
-  }catch(_){}
+  if(chk.step<0 || chk.step>=CHK_Q.length) return;
+  MGVoice.speak(CHK_Q[chk.step].q, {cancelFirst:true});
 }
 function sttSupported(){ return !!(window.SpeechRecognition||window.webkitSpeechRecognition); }
 function chkMic(){
   if(chk.listening){ try{chk.rec&&chk.rec.stop();}catch(_){ } return; }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ toast('Dettatura non supportata qui: scrivi la risposta'); return; }
-  try{ speechSynthesis&&speechSynthesis.cancel(); }catch(_){}
+  try{ MGVoice.cancel(); }catch(_){}
   const rec=new SR();
   rec.lang='it-IT'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
   let finalTxt=chk.answers[chk.step]?chk.answers[chk.step]+' ':'';
@@ -884,6 +1001,33 @@ function analyzeEyeFrame(lm,vw,vh){
   const gaze=(gz(EYE.R)+gz(EYE.L))/2;
   return {ok:true, ear, earR, earL, pfhMm, mrdMm, irisPx, gaze, gazeUp:gaze<0.42, asym:Math.abs(earR-earL)};
 }
+/* ---- overlay live dei landmark dell'occhio (come riconosce il modello) ---- */
+let eyeOverlayOn=true;
+const EYE_RING_R=[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
+const EYE_RING_L=[362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
+function toggleEyeOverlay(){
+  eyeOverlayOn=!eyeOverlayOn;
+  const cv=document.getElementById('eyeOverlay');
+  if(cv){ cv.style.display=eyeOverlayOn?'block':'none'; if(!eyeOverlayOn){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); } }
+  const b=document.getElementById('eyeOverlayBtn'); if(b) b.textContent=eyeOverlayOn?'Nascondi punti':'Mostra punti';
+}
+function drawEyeOverlay(lm,vw,vh){
+  const cv=document.getElementById('eyeOverlay');
+  if(!cv || !eyeOverlayOn) return;
+  if(cv.width!==vw || cv.height!==vh){ cv.width=vw; cv.height=vh; }
+  const ctx=cv.getContext('2d'); ctx.clearRect(0,0,vw,vh);
+  if(!lm) return;
+  const px=i=>{ const p=lm[i]; return [p.x*vw, p.y*vh]; };
+  const earNow=(earEye(lm,EYE.R,vw,vh)+earEye(lm,EYE.L,vw,vh))/2;
+  const blink=earNow<0.15, ring=blink?'#FF5A47':'#39E0A8', w=Math.max(1.6,vw/300);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.lineWidth=w; ctx.strokeStyle=ring;
+  for(const R of [EYE_RING_R,EYE_RING_L]){ ctx.beginPath(); R.forEach((i,k)=>{ const [x,y]=px(i); k?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.closePath(); ctx.stroke(); }
+  ctx.strokeStyle=blink?'#FFB199':'#7FD7FF';
+  for(const [c,a,b] of [[468,469,471],[473,474,476]]){ const C0=px(c),A=px(a),B=px(b),r=Math.hypot(A[0]-B[0],A[1]-B[1])/2; ctx.beginPath(); ctx.arc(C0[0],C0[1],r,0,Math.PI*2); ctx.stroke(); ctx.fillStyle=ring; ctx.beginPath(); ctx.arc(C0[0],C0[1],w*1.1,0,Math.PI*2); ctx.fill(); }
+  ctx.strokeStyle='#FFD86B'; ctx.lineWidth=Math.max(1.1,vw/420);
+  for(const e of [EYE.R,EYE.L]){ for(const [a,b] of e.vt){ const A=px(a),B=px(b); ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke(); } const O=px(e.outer),I=px(e.inner); ctx.beginPath(); ctx.moveTo(O[0],O[1]); ctx.lineTo(I[0],I[1]); ctx.stroke(); }
+}
 const eyeTest={phase:'idle',source:null,duration:60,stream:null,frames:[],gotFrames:0,
   t0:0,raf:null,lastVideoTime:-1,modelReady:false,status:'',saved:false};
 function computeEyeBiomarkers(){
@@ -932,8 +1076,10 @@ function eyeTick(){
         const a=analyzeEyeFrame(res.faceLandmarks[0], v.videoWidth, v.videoHeight);
         a.blink=a.ear<0.15; a.t=elapsed;
         eyeTest.frames.push(a); eyeTest.gotFrames++;
+        drawEyeOverlay(res.faceLandmarks[0], v.videoWidth, v.videoHeight);
       }else{
         eyeTest.frames.push({ok:false,t:elapsed,ear:0,pfhMm:0,mrdMm:0,gaze:0.5,gazeUp:false,asym:0,blink:false});
+        drawEyeOverlay(null, v.videoWidth, v.videoHeight);
       }
     }
   }
@@ -975,10 +1121,21 @@ function eyeFreeHW(){
   if(eyeTest.raf){ clearInterval(eyeTest.raf); eyeTest.raf=null; }
   if(eyeTest.stream){ eyeTest.stream.getTracks().forEach(t=>t.stop()); eyeTest.stream=null; }
 }
+/* porta una card (es. il box del test) ad allinearsi appena sotto la topbar,
+   così il punto da fissare per la ptosi sale in alto sullo schermo */
+function scrollScreenToCard(id){
+  requestAnimationFrame(()=>{
+    const screen=document.getElementById('screen'), card=document.getElementById(id);
+    if(!screen||!card) return;
+    const s=screen.getBoundingClientRect(), c=card.getBoundingClientRect();
+    screen.scrollTop += (c.top - s.top);
+  });
+}
 async function eyeStart(){
   Object.assign(eyeTest,{phase:'running',source:null,frames:[],gotFrames:0,saved:false,
     t0:performance.now(),lastVideoTime:-1,modelReady:false,status:'caricamento modello…'});
   render();
+  scrollScreenToCard('eyeLive');
   try{
     if(!navigator.mediaDevices?.getUserMedia) throw new Error('no-media');
     eyeTest.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
@@ -1596,7 +1753,14 @@ function eyeCard(){
   if(eyeTest.phase==='running'){
     const visual=eyeTest.source==='sim'
       ? '<div aria-hidden="true" style="height:140px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#EDF3F4,#EDF3F4 10px,#E5EDEF 10px,#E5EDEF 20px);border:1px dashed #9AB3B9;font-size:38px;">👁️</div>'
-      : '<video id="eyeVideo" playsinline muted autoplay style="width:100%;max-height:190px;object-fit:cover;border-radius:10px;background:#15262C;transform:scaleX(-1);margin-top:12px;"></video>';
+      : '<div style="position:relative;margin-top:12px;border-radius:10px;overflow:hidden;background:#15262C;">'
+          +'<video id="eyeVideo" playsinline muted autoplay style="display:block;width:100%;max-height:190px;object-fit:cover;transform:scaleX(-1);"></video>'
+          +'<canvas id="eyeOverlay" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);pointer-events:none;"></canvas>'
+        +'</div>'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;">'
+          +'<div style="font-size:11px;color:var(--inkSoft);line-height:1.4;"><span style="color:#39E0A8;">●</span> occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso</div>'
+          +'<button id="eyeOverlayBtn" class="btn small" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">Nascondi punti</button>'
+        +'</div>';
     return '<div class="card" id="eyeLive" style="margin-top:14px;padding:18px;">'+
       '<div style="text-align:center;margin-bottom:8px;"><span aria-hidden="true" style="display:inline-block;width:16px;height:16px;border-radius:999px;background:var(--primary);animation:mgPulse 1.6s ease-in-out infinite;"></span>'+
       '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:4px;">tieni lo sguardo su questo punto, in alto</div></div>'+
@@ -1780,6 +1944,12 @@ function openSettings(){
     sw('swArm',en.armdrift,'Arm drift','tenuta del braccio · sensori movimento')+
     '<div class="seclabel">Voce e notifiche</div>'+
     sw('swTts',SET.tts,'Leggi le domande ad alta voce','sintesi vocale del check-in')+
+    '<div class="field" style="margin-top:10px;"><label for="setVoiceMode">Voce dell\u2019assistente</label>'+
+      '<select id="setVoiceMode" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink);">'+
+        '<option value="system"'+(SET.voiceMode!=='kokoro'?' selected':'')+'>Voce di sistema · gratuita, offline</option>'+
+        '<option value="kokoro"'+(SET.voiceMode==='kokoro'?' selected':'')+'>Voce naturale (on-device) · ~82 MB al primo uso</option>'+
+      '</select>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">La voce naturale scarica un modello neurale una sola volta e poi funziona offline; se il dispositivo non la supporta si torna automaticamente alla voce di sistema.</div></div>'+
     '<div class="card" style="margin-top:10px;padding:14px;">'+
       '<div style="font-weight:700;font-size:13.5px;">Notifiche push</div>'+
       '<div style="font-size:12px;color:var(--inkSoft);line-height:1.5;margin-top:3px;">Promemoria all\u2019orario scelto anche ad app chiusa. Su iPhone: prima installa l\u2019app in Home (Condividi → Aggiungi a schermata Home).</div>'+
@@ -1803,7 +1973,9 @@ async function saveSettingsUI(){
   SET.tests_time=v('setTests').value||SET.tests_time;
   SET.tests_enabled={ptosi:v('swPtosi').checked,conta:v('swConta').checked,armdrift:v('swArm').checked};
   SET.tts=v('swTts').checked;
+  SET.voiceMode=(v('setVoiceMode')&&v('setVoiceMode').value==='kokoro')?'kokoro':'system';
   saveSettings(); closeSettings(); render();
+  MGVoice.cancel(); MGVoice.prepare();   // applica subito la scelta (eventuale download Kokoro)
   if(SBOK){ await ensurePatient(); refreshData(); toast('Impostazioni salvate e sincronizzate'); }
   else toast('Salvate sul dispositivo');
 }
@@ -1991,7 +2163,7 @@ function ScreenTerapia(){
    Dialoga in italiano, ricorda le attività del giorno e avvia le
    funzioni dell'app eseguendo le "azioni" decise dall'Edge Function.
    ============================================================ */
-const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null,
+const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null, live:'', discard:false,
   routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false} };
 
 function horusAvatarSVG(){
@@ -2105,18 +2277,30 @@ function chatMic(){
   if(chat.listening){ try{chat.rec&&chat.rec.stop();}catch(_){ } return; }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ toast('Dettatura non supportata qui: scrivi pure'); return; }
-  try{ speechSynthesis&&speechSynthesis.cancel(); }catch(_){}
+  try{ MGVoice.cancel(); }catch(_){}
   const rec=new SR(); rec.lang='it-IT'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
   let finalTxt='';
+  chat.discard=false; chat.live='';
   rec.onresult=e=>{ let interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; if(e.results[i].isFinal) finalTxt+=t; else interim+=t; }
-    const ta=document.getElementById('chatInput'); if(ta){ ta.value=(finalTxt+interim).trim(); autoGrow(ta); }
+    const txt=(finalTxt+interim).trim(); chat.live=txt;
+    const big=document.getElementById('chatLiveBig'); if(big && txt) big.textContent=txt;      // parole live, grandi
+    const ta=document.getElementById('chatInput'); if(ta){ ta.value=txt; autoGrow(ta); }
   };
-  rec.onend=()=>{ chat.listening=false; const ta=document.getElementById('chatInput'); render();
-    const v=(ta?ta.value:finalTxt).trim(); const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=v; autoGrow(ta2);} };
+  rec.onend=()=>{ chat.listening=false;
+    if(chat.discard){ chat.discard=false; chat.live=''; render(); const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t);} return; }
+    render();
+    const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=((ta2.value&&ta2.value.trim())||chat.live||finalTxt).trim(); autoGrow(ta2);} };
   rec.onerror=e=>{ chat.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
   chat.rec=rec; chat.listening=true; render();
   try{ rec.start(); }catch(_){ chat.listening=false; render(); }
+}
+/* Annulla/cancella: ferma la dettatura ed elimina ciò che era stato inserito. */
+function chatMicCancel(){
+  chat.discard=true; chat.live='';
+  const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t); }
+  if(chat.listening){ try{chat.rec&&chat.rec.stop();}catch(_){ } }
+  else render();
 }
 function autoGrow(ta){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
 function chatSubmitFromInput(){
@@ -2156,19 +2340,11 @@ function pushUser(t){ chat.msgs.push({role:'user',text:t}); }
 /* lettura vocale dei messaggi generati (attiva salvo "muta" = SET.tts false).
    NON annulla la voce in corso: i messaggi si accodano in ordine. */
 function say(text,onend){
-  if(SET.tts && ('speechSynthesis' in window)){
-    try{
-      const u=new SpeechSynthesisUtterance(text); u.lang='it-IT'; u.rate=1;
-      if(onend) u.onend=()=>{ try{onend();}catch(_){ } };
-      speechSynthesis.speak(u);
-      return;
-    }catch(_){}
-  }
-  if(onend) setTimeout(onend,60);
+  MGVoice.speak(text, {onend});
 }
 function toggleHorusMute(){
   SET.tts=!SET.tts; saveSettings();
-  if(!SET.tts){ try{ speechSynthesis.cancel(); }catch(_){ } }
+  if(!SET.tts){ MGVoice.cancel(); }
   toast(SET.tts?'Voce attiva':'Voce disattivata');
   render();
 }
@@ -2213,7 +2389,7 @@ function routineListen(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ chat.routine.armed=false; toast('Riconoscimento vocale non disponibile: usa i pulsanti'); render(); return; }
   if(chat.routine.listening) return;
-  try{ speechSynthesis&&speechSynthesis.cancel(); }catch(_){}
+  try{ MGVoice.cancel(); }catch(_){}
   const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
   let txt='';
   rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
@@ -2343,6 +2519,16 @@ function ScreenHorus(){
       (thread||'')+
       '<div class="chips">'+chips+'</div>'+
     '</div>'+
+    (chat.listening?
+      '<div class="liveoverlay">'+
+        '<div class="livedot"><svg width="34" height="34" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="#fff"/></svg></div>'+
+        '<div class="livewords" id="chatLiveBig">'+(chat.live?esc(chat.live):'<span class="livehint">Parla pure… ti ascolto</span>')+'</div>'+
+        '<div class="liverow">'+
+          '<button class="btn" onclick="chatMicCancel()">Annulla</button>'+
+          '<button class="btn voice" onclick="chatMic()">Fatto</button>'+
+        '</div>'+
+      '</div>'
+    :'')+
     '<div class="composer">'+
       '<textarea id="chatInput" rows="1" placeholder="Scrivi a Horus…" oninput="autoGrow(this)" onkeydown="chatKey(event)"></textarea>'+
       (micEnabled?'<button class="cbtn mic'+(chat.listening?' live':'')+'" onclick="chatMic()" aria-label="Parla">'+
@@ -2374,6 +2560,34 @@ function showOnboarding(){
   setTimeout(()=>{ const f=document.getElementById('obFirst'); if(f) f.focus(); },50);
 }
 function closeOnboarding(){ const r=document.getElementById('onboardRoot'); if(r) r.innerHTML=''; }
+/* ---------------- primo accesso: scelta della voce di Horus ---------------- */
+let _voiceAskDone=null;
+function askVoiceDownload(done){
+  _voiceAskDone=done||function(){};
+  if(SET.voiceAsked){ const d=_voiceAskDone; _voiceAskDone=null; d(); return; }
+  const r=document.getElementById('onboardRoot');
+  if(!r){ const d=_voiceAskDone; _voiceAskDone=null; d(); return; }
+  r.innerHTML=
+  '<div class="modal" style="align-items:flex-start;"><div class="sheet" style="max-width:440px;margin-top:0;">'+
+    '<div style="text-align:center;padding-top:6px;">'+
+      '<div class="pendant idle" style="width:84px;height:84px;margin:4px auto 10px;"><div class="rw"></div><div class="rw r2" style="inset:9px;"></div><div class="rw r3" style="inset:18px;"></div><div class="core" style="inset:25px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="#fff"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></div></div>'+
+      '<h2 style="font-size:21px;">La voce di Horus</h2>'+
+      '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">Vuoi attivare la <b>voce naturale</b> di Horus? Si scarica una sola volta un modello (~82 MB), poi funziona <b>offline</b> e il testo non lascia il dispositivo. In alternativa uso la <b>voce di sistema</b> del telefono (gratis, nessun download).</div>'+
+    '</div>'+
+    '<button class="btn voice full" style="margin-top:16px;" onclick="voicePick(\u0027kokoro\u0027)">Sì, scarica la voce naturale (~82 MB)</button>'+
+    '<button class="btn full" style="margin-top:10px;" onclick="voicePick(\u0027system\u0027)">No, usa la voce di sistema</button>'+
+    '<div style="font-size:11.5px;color:var(--inkSoft);text-align:center;margin-top:12px;line-height:1.45;">Puoi cambiare quando vuoi da Impostazioni → Voce dell\u2019assistente.</div>'+
+  '</div></div>';
+}
+function voicePick(choice){
+  SET.voiceAsked=true;
+  if(choice==='kokoro') SET.voiceMode='kokoro';
+  saveSettings();
+  const r=document.getElementById('onboardRoot'); if(r) r.innerHTML='';
+  if(choice==='kokoro' && typeof MGVoice!=='undefined') MGVoice.prepare();
+  const d=_voiceAskDone; _voiceAskDone=null; if(typeof d==='function') d();
+}
+
 async function finishOnboarding(){
   const f=(document.getElementById('obFirst').value||'').trim();
   const l=(document.getElementById('obLast').value||'').trim();
@@ -2384,7 +2598,7 @@ async function finishOnboarding(){
   currentTab='horus';
   render({top:true});
   if(SBOK){ await ensurePatient(); await refreshData(); }
-  if(typeof openHorus==='function') openHorus();
+  askVoiceDownload(()=>{ if(typeof openHorus==='function') openHorus(); });
 }
 
 /* ---------------- navigazione, ambiente, avvio ---------------- */
@@ -2474,7 +2688,7 @@ async function init(){
     return;   // la riga paziente viene creata da finishOnboarding(), col nome
   }
   if(SBOK){ await ensurePatient(); await refreshData(); }
-  openHorus();
+  askVoiceDownload(openHorus);
 }
 init();
 </script>
