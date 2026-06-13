@@ -69,7 +69,7 @@
   .tile .l{font-size:10.5px;color:var(--inkSoft);margin-top:2px;}
 
   /* app bar */
-  .appbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 20px;background:var(--bg);flex-shrink:0;padding-top:calc(12px + env(safe-area-inset-top));}
+  .appbar{display:flex;justify-content:flex-end;align-items:center;padding:6px 14px;background:transparent;flex-shrink:0;padding-top:calc(6px + env(safe-area-inset-top));}
   .brand{display:flex;align-items:center;gap:10px;min-width:0;}
   .brand img{width:34px;height:34px;border-radius:999px;flex-shrink:0;}
   .brandname{font-weight:700;font-size:16px;line-height:1.15;}
@@ -99,6 +99,9 @@
   .bubble{max-width:86%;padding:12px 15px;border-radius:18px;font-size:14.5px;line-height:1.5;margin-top:10px;}
   .bubble.bot{background:var(--card);border-bottom-left-radius:6px;box-shadow:0 3px 12px rgba(27,58,42,.06);}
   .bubble.me{background:var(--voiceSoft);color:#14474E;margin-left:auto;border-bottom-right-radius:6px;}
+  .bubble code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em;background:rgba(0,0,0,.06);padding:1px 5px;border-radius:6px;}
+  .bubble a{color:inherit;text-decoration:underline;}
+  .bubble strong{font-weight:700;}
   .micbtn{width:74px;height:74px;border-radius:999px;border:none;background:var(--voice);color:#fff;display:grid;place-items:center;margin:14px auto 4px;box-shadow:0 8px 22px rgba(31,110,120,.35);}
   .micbtn.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
   .dots{display:flex;gap:6px;justify-content:center;margin-top:8px;}
@@ -162,19 +165,9 @@
 <body>
 
 <header class="appbar">
-  <div class="brand">
-    <img src="icons/icon-192.png" alt="" onerror="this.style.display='none'">
-    <div style="min-width:0;">
-      <div class="brandname" id="brandName">Horus</div>
-      <div class="brandsub" id="appSub">Collana vocale · miastenia gravis</div>
-    </div>
-  </div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <span class="lisdot" id="lisDot" title="Stato collana"></span>
-    <button class="iconbtn" onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-    </button>
-  </div>
+  <button class="iconbtn" onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+  </button>
 </header>
 <div id="envDiag" style="flex-shrink:0;"></div>
 
@@ -277,6 +270,17 @@ function toast(msg,ms=2600){
   clearTimeout(toast._t); toast._t=setTimeout(()=>{r.innerHTML='';},ms);
 }
 function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// markdown leggero per le bolle: prima si fa escape dell'HTML (sicurezza), poi si rende
+function mdLite(s){
+  let t=esc(String(s??''));
+  t=t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');  // link
+  t=t.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>').replace(/__([^_\n]+)__/g,'<strong>$1</strong>');     // grassetto
+  t=t.replace(/\*([^*\n]+)\*/g,'<em>$1</em>');                                                                 // corsivo
+  t=t.replace(/`([^`\n]+)`/g,'<code>$1</code>');                                                               // codice inline
+  t=t.replace(/^#{1,6}\s*/gm,'').replace(/^&gt;\s?/gm,'').replace(/^\s*[-*]\s+/gm,'• ');                       // titoli/citazioni/elenchi
+  t=t.replace(/\n/g,'<br>');                                                                                   // a capo
+  return t;
+}
 function todayISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function nowHM(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function fmtDate(d){ return new Date(d).toLocaleDateString('it-IT',{day:'numeric',month:'short'}); }
@@ -737,11 +741,33 @@ const MGVoice = (function(){
   }
   try{ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>{ try{speechSynthesis.getVoices();}catch(_){} }; } }catch(_){}
 
+  /* ---------- pulizia del testo letto: via emoji, simboli decorativi e marcatori markdown ---------- */
+  // pronuncia "a spelling" delle sigle (lette lettera per lettera, in italiano)
+  const IT_LETTERS={A:'a',B:'bi',C:'ci',D:'di',E:'e',F:'effe',G:'gi',H:'acca',I:'i',J:'i lunga',K:'cappa',L:'elle',M:'emme',N:'enne',O:'o',P:'pi',Q:'cu',R:'erre',S:'esse',T:'ti',U:'u',V:'vu',W:'doppia vu',X:'ics',Y:'ipsilon',Z:'zeta'};
+  function spell(w){ return String(w).toUpperCase().replace(/[^A-Z]/g,'').split('').map(c=>IT_LETTERS[c]||c).join(' '); }
+  const SPOKEN_ACRONYMS=[
+    [/\bMG[\s-]?ADL\b/gi, spell('MGADL')],   // MG-ADL -> "emme gi a di elle" (aggiungi qui altre sigle, es. [/\bHNR\b/gi, spell('HNR')])
+  ];
+  function spellAcronyms(s){ let t=String(s||''); for(const [re,rep] of SPOKEN_ACRONYMS) t=t.replace(re,rep); return t; }
+  function cleanForSpeech(t){
+    if(!t) return '';
+    let s=spellAcronyms(String(t));                                 // prima le sigle a spelling (mentre l'ortografia è intatta)
+    s=s.replace(/\p{Extended_Pictographic}/gu,' ');                 // emoji/pittogrammi (☀️ 📋 🔊 ✨ ⚠️ …)
+    s=s.replace(/[\u200D\uFE0E\uFE0F]/g,'');                        // ZWJ + selettori di variazione
+    s=s.replace(/[\u2022\u00B7\u2023\u2043\u25AA\u25CF\u25CB\u25A0\u25A1\u25C6\u25C7\u25B6\u25C0\u2713\u2714\u2715\u2716\u2717\u2718\u2705\u2611\u2605\u2606\u2726\u2727\u2190\u2191\u2192\u2193\u2194\u2195\u27A1\u2B05\u2B06\u2B07\u00BB\u00AB]/g,' ');  // bullet, check, frecce, virgolette decorative
+    s=s.replace(/[*_`#>~|^]/g,' ');                                 // marcatori markdown
+    s=s.replace(/^[ \t]*[-–—][ \t]+/gm,' ');                        // trattini di elenco a inizio riga
+    s=s.replace(/\s{2,}/g,' ');
+    return s.trim();
+  }
+
   /* ---------- livello 2: voce cloud (Google TTS via Edge Function, con cache condivisa) ---------- */
   const TTS_FN = (typeof MG_CONFIG!=='undefined' && MG_CONFIG.SUPABASE_URL) ? MG_CONFIG.SUPABASE_URL+'/functions/v1/tts' : null;
   const TTS_VOICE = (typeof MG_CONFIG!=='undefined' && MG_CONFIG.TTS_CLOUD_VOICE) || 'it-IT-Wavenet-D';
+  const TTS_PITCH = (typeof MG_CONFIG!=='undefined' && typeof MG_CONFIG.TTS_CLOUD_PITCH==='number') ? MG_CONFIG.TTS_CLOUD_PITCH : 0;   // tono (semitoni): negativo = più basso/caldo
+  const TTS_RATE  = (typeof MG_CONFIG!=='undefined' && typeof MG_CONFIG.TTS_CLOUD_RATE==='number')  ? MG_CONFIG.TTS_CLOUD_RATE  : 1;   // velocità
   const PRERENDERED = {};            // testo fisso → file statico pre-renderizzato (stessa voce): niente chiamata a runtime
-  try{ if(typeof CHK_Q!=='undefined') CHK_Q.forEach(x=>{ PRERENDERED[x.q]='./audio/chk-'+x.key+'.mp3'; }); }catch(_){}
+  try{ if(typeof CHK_Q!=='undefined') CHK_Q.forEach(x=>{ PRERENDERED[cleanForSpeech(x.q)]='./audio/chk-'+x.key+'.mp3'; }); }catch(_){}
   const cUrlCache=new Map();         // testo → url audio (cache di sessione, per dispositivo)
   let cQueue=[], cBusy=false, cAudio=null;
   function cPlay(url,onend,fallbackText){
@@ -752,16 +778,16 @@ const MGVoice = (function(){
   async function cFetchUrl(text){
     await new Promise(r=>setTimeout(r, 40+Math.floor(Math.random()*260)));    // jitter: sfasa le richieste simultanee
     let lastErr=null;
-    for(let i=0;i<3;i++){
+    for(let i=0;i<4;i++){                                                     // più tentativi: sopravvive al cold start della funzione
       try{
         const r=await fetch(TTS_FN,{method:'POST',
           headers:{'Content-Type':'application/json','apikey':MG_CONFIG.SUPABASE_ANON_KEY,'Authorization':'Bearer '+MG_CONFIG.SUPABASE_ANON_KEY},
-          body:JSON.stringify({text,voice:TTS_VOICE})});
-        if(r.status===429||r.status>=500){ lastErr=new Error('HTTP '+r.status); await new Promise(s=>setTimeout(s,400*(i+1))); continue; }  // throttling → backoff
+          body:JSON.stringify({text,voice:TTS_VOICE,pitch:TTS_PITCH,rate:TTS_RATE})});
+        if(r.status===429||r.status>=500){ lastErr=new Error('HTTP '+r.status); await new Promise(s=>setTimeout(s,600*(i+1))); continue; }  // throttling/cold boot → backoff
         if(!r.ok) throw new Error('HTTP '+r.status);
         const j=await r.json(); if(!j.url) throw new Error('risposta senza url');
         return j.url;
-      }catch(e){ lastErr=e; await new Promise(s=>setTimeout(s,300*(i+1))); }
+      }catch(e){ lastErr=e; await new Promise(s=>setTimeout(s,500*(i+1))); }
     }
     throw lastErr||new Error('tts non disponibile');
   }
@@ -806,6 +832,7 @@ const MGVoice = (function(){
   /* ---------- API unificata ---------- */
   function speak(text,opts){
     opts=opts||{};
+    text=cleanForSpeech(text);                               // niente emoji/simboli letti ad alta voce
     if(!text || !SET.tts){ if(opts.onend) setTimeout(opts.onend,40); return; }
     if(opts.cancelFirst) cancel();
     if(SET.voiceMode==='google'){ cloudSpeak(text,opts.onend); return; }    // voce naturale cloud (Google) + cache
@@ -1617,7 +1644,7 @@ function ScreenAscolto(){
   const pendant=(extraId)=>
   '<div class="pendant '+(running?'':'idle')+'"'+(extraId?' id="'+extraId+'"':'')+'>'+
     '<div class="rw"></div><div class="rw r2"></div><div class="rw r3"></div>'+
-    '<div class="core"><svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M4 3c0 5 3.5 7 8 7s8-2 8-7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><rect x="9" y="10.5" width="6" height="9" rx="3" fill="#fff"/><path d="M7.2 15.5a4.8 4.8 0 0 0 9.6 0" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></div>'+
+    '<div class="core"><img src="icons/eye-white.png" width="46" height="46" alt="" style="display:block;object-fit:contain;"></div>'+
   '</div>';
 
   // --- sessione "stato basale" in corso ---
@@ -2187,8 +2214,8 @@ const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error
   routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false} };
 
 function horusAvatarSVG(){
-  // occhio di Horus stilizzato
-  return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 12c2.5-4 6-6 9-6s6.5 2 9 6c-2.5 4-6 6-9 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.7" fill="#fff"/><path d="M12 18c-1 1.6-1.4 3-1.2 4.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M16.5 16.8c1.6.2 2.7 1 3.3 2.4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  // occhio di Horus (icona caricata, bianca su avatar colorato)
+  return '<img src="icons/eye-white.png" width="24" height="24" alt="" style="display:block;object-fit:contain;">';
 }
 
 function buildChatContext(){
@@ -2492,7 +2519,7 @@ function ScreenHorus(){
   for(const m of chat.msgs){
     thread += m.role==='user'
       ? '<div class="bubble me">'+esc(m.text)+'</div>'
-      : '<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;flex-shrink:0;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;">'+esc(m.text)+'</div></div>';
+      : '<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;flex-shrink:0;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;">'+mdLite(m.text)+'</div></div>';
   }
   if(chat.busy) thread+='<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;padding:4px 6px;"><div class="typing"><span></span><span></span><span></span></div></div></div>';
   if(chat.error) thread+='<div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;text-align:center;">Horus è in modalità locale ('+esc(chat.error)+').</div>';
@@ -2686,9 +2713,10 @@ async function openHorus(){
 }
 async function init(){
   if(typeof MG_CONFIG!=='undefined') {
-    document.getElementById('brandName').textContent=MG_CONFIG.APP_NAME;
+    const bn=document.getElementById('brandName'); if(bn) bn.textContent=MG_CONFIG.APP_NAME;
     document.title=MG_CONFIG.APP_NAME+' · monitoraggio vocale della miastenia gravis';
   }
+  try{ if(typeof MGVoice!=='undefined') MGVoice.prepare(); }catch(_){}   // scalda subito la Edge Function: il primo saluto usa già la voce cloud
   // chi aveva già un nome da una versione precedente non rivede l'onboarding
   if(!SET.onboarded && fullName(SET)){ SET.onboarded=true; saveSettings(); }
   envCheck();
