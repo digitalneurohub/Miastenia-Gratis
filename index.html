@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Horus · monitoraggio vocale della miastenia gravis</title>
 
 <link rel="manifest" href="manifest.webmanifest">
@@ -37,7 +37,8 @@
   }
   *{box-sizing:border-box;}
   html,body{height:100%;}
-  body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
+  html{touch-action:pan-x pan-y;}   /* niente pinch/doppio-tap zoom, lo scorrimento resta */
+  body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);height:100dvh;display:flex;flex-direction:column;overflow:hidden;touch-action:pan-x pan-y;}
   button{font-family:inherit;cursor:pointer;}
   input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);}
   :focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
@@ -860,6 +861,15 @@ function iosVoiceHelp(){
   if(IS_IOS) return 'Su iPhone attiva la dittatura per usare la voce: Impostazioni \u203a Generali \u203a Tastiera \u203a Abilita dittatura. In alternativa puoi scrivere qui.';
   return 'Microfono non disponibile: controlla i permessi del browser. Puoi sempre scrivere qui.';
 }
+/* Blocca lo zoom con il pinch su iOS: Safari ignora user-scalable=no nel browser,
+   quindi intercettiamo gli eventi gesto (pinch) e il movimento a due dita.
+   Lo scorrimento e i tap restano attivi; nell'app installata in Home vale anche il viewport. */
+(function blockPinchZoom(){
+  ['gesturestart','gesturechange','gestureend'].forEach(t=>{
+    document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
+  });
+  document.addEventListener('touchmove', e=>{ if(e.touches && e.touches.length>1) e.preventDefault(); }, {passive:false});
+})();
 function chkMic(){
   if(chk.listening){ try{chk.rec&&chk.rec.stop();}catch(_){ } return; }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
