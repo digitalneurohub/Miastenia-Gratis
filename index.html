@@ -229,7 +229,7 @@ const DEF_SET={first_name:'', last_name:'', name:'', onboarded:false,
   code:'', checkin_time:'07:30', tests_time:'18:00', meds_time:'08:00',
   tests_enabled:{ptosi:true,conta:true,armdrift:true},
   tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT, voiceMode:'system', voiceAsked:false,
-  fab_side:'right'};
+  fab_side:'right', introduced:false};
 let SET=loadSettings();
 function loadSettings(){
   try{ const s=JSON.parse(localStorage.getItem('mg_settings')||'null');
@@ -2764,14 +2764,27 @@ function startRoutine(){
   const nm=SET.first_name?' '+SET.first_name:'';
   // microfono attivo all'apertura: la routine si mette in ascolto da sola dopo la domanda
   chat.routine.steps=routineSteps(); chat.routine.step=0; chat.routine.armed=true;
+  // primissima apertura dell'app: Horus si presenta (una volta sola)
+  const firstEver=!SET.introduced;
+  if(firstEver){ SET.introduced=true; saveSettings(); pushBot(horusIntro(nm)); }
   if(!chat.routine.steps.length){
     chat.routine.active=false; chat.routine.done=true;
-    pushBot('Ciao'+nm+'! Per oggi sei in pari. Come ti senti? Se vuoi raccontarmi com\u2019è andata o ti serve altro, dimmi pure — a voce o per iscritto.');
+    pushBot(firstEver
+      ? 'Per oggi non c’è nulla da registrare. Come ti senti? Puoi raccontarmi com’è andata, a voce o per iscritto.'
+      : 'Ciao'+nm+'! Per oggi sei in pari. Come ti senti? Se vuoi raccontarmi com’è andata o ti serve altro, dimmi pure — a voce o per iscritto.');
     render({bottom:true}); return;
   }
   chat.routine.active=true; chat.routine.done=false;
-  pushBot('Ciao'+nm+'! Come va stamattina? Vediamo insieme cosa c\u2019è da fare.');
+  pushBot(firstEver
+    ? 'Per cominciare, vediamo insieme com’è la tua giornata.'
+    : 'Ciao'+nm+'! Come va stamattina? Vediamo insieme cosa c’è da fare.');
   routineAsk();
+}
+// presentazione di Horus alla primissima apertura
+function horusIntro(nm){
+  return 'Ciao'+nm+', piacere di conoscerti: io sono Horus, il tuo assistente per la miastenia. '
+    +'Ti aiuto giorno per giorno — check-up con MG-ADL settimanale, test rapidi di occhi, voce e braccia, ascolto della voce, promemoria della terapia e andamento da condividere col tuo medico. '
+    +'Quando vuoi, parlami toccando l’occhio oppure scrivi qui sotto.';
 }
 function routineAsk(){
   const q=routinePrompt(chat.routine.steps[chat.routine.step]);
@@ -2779,7 +2792,13 @@ function routineAsk(){
   pushBot(q, {onend: ()=>{ if(!IS_IOS && chat.routine.active && chat.routine.armed && !chat.routine.listening) routineListen(); }});
   render({bottom:true});
 }
-function routineStopListen(){ try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; }
+function routineStopListen(){
+  // stacca i gestori PRIMA di fermare: un risultato tardivo (eco del parlato o prompt vocale del telefono)
+  // non deve essere elaborato né letto quando l'utente tocca Sì/No o mette in pausa
+  const r=chat.routine.rec;
+  if(r){ try{ r.onresult=null; r.onend=null; r.onerror=null; }catch(_){ } try{ r.abort?r.abort():r.stop(); }catch(_){ } }
+  chat.routine.rec=null; chat.routine.listening=false;
+}
 function routinePauseListen(){ chat.routine.paused=true; routineStopListen(); render(); }   // l'utente tocca il microfono per fermare
 function routineListen(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
