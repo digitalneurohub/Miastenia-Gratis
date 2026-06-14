@@ -18,7 +18,7 @@
   · "Collana" vocale: il microfono del telefono estrae in locale i parametri
     acustici (F0, HNR, jitter, shimmer, pause, intensità); l'audio non viene
     mai salvato né trasmesso, viaggiano solo i numeri verso Supabase.
-  · Check-in conversazionale: domande informali a voce → trascrizione →
+  · Check-up conversazionale: domande informali a voce → trascrizione →
     Claude API (via Edge Function) compila la MG-ADL → database.
   · Test opzionali su notifica: ptosi, conta in un respiro, arm drift.
   Configurazione in config.js · setup completo in SETUP.md
@@ -99,7 +99,7 @@
   .pendant.idle .rw.r3{animation-delay:.8s;}
   .pendant .core{position:absolute;inset:54px;border-radius:999px;background:var(--voice);display:grid;place-items:center;color:#fff;box-shadow:0 10px 26px rgba(31,110,120,.35);}
 
-  /* ---------- chat del check-in ---------- */
+  /* ---------- chat del check-up ---------- */
   .bubble{max-width:86%;padding:12px 15px;border-radius:18px;font-size:14.5px;line-height:1.5;margin-top:10px;}
   .bubble.bot{background:var(--card);border-bottom-left-radius:6px;box-shadow:0 3px 12px rgba(27,58,42,.06);}
   .bubble.me{background:var(--voiceSoft);color:#14474E;margin-left:auto;border-bottom-right-radius:6px;}
@@ -154,7 +154,7 @@
   .fab-eye img{width:30px;height:30px;object-fit:contain;display:block;}
   .fab-bubble{background:var(--card);padding:10px 13px;box-shadow:0 6px 20px rgba(27,58,42,.16);font-size:13px;line-height:1.4;color:var(--ink);max-width:300px;cursor:pointer;}
   .fab.left .fab-bubble{border-radius:16px 16px 16px 4px;}
-  .fab.right .fab-bubble{border-radius:16px 16px 4px 16px;text-align:right;}
+  .fab.right .fab-bubble{border-radius:16px 16px 4px 16px;text-align:left;}
   .fab-bubble .who{font-size:10px;font-weight:700;color:var(--voice);letter-spacing:.04em;}
   .fab-panel{position:fixed;left:max(14px,calc(50% - 268px));right:max(14px,calc(50% - 268px));bottom:calc(80px + env(safe-area-inset-bottom));z-index:61;background:var(--card);border-radius:20px;box-shadow:0 16px 48px rgba(27,58,42,.28);max-width:520px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;max-height:70dvh;}
   .fab-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--line);}
@@ -670,7 +670,7 @@ function updateBaseLive(){
 }
 
 /* ============================================================
-   CHECK-IN — domande informali a voce → MG-ADL via Claude API
+   CHECK-UP — domande informali a voce → MG-ADL via Claude API
    La trascrizione avviene con la Web Speech API del browser;
    il punteggio viene calcolato dalla Edge Function `score-scale`.
    ============================================================ */
@@ -809,7 +809,7 @@ const MGVoice = (function(){
   }
   function cloudSpeak(text,onend){ if(!TTS_FN){ sysSpeak(text,onend); return; } cQueue.push({text,onend}); cProcess(); }
   function cCancel(){ cQueue=[]; if(cAudio){ try{cAudio.pause();}catch(_){} try{cAudio.src='';}catch(_){} cAudio=null; } cBusy=false; }
-  // pre-scalda le domande fisse del check-in: se il file statico c'è lo lascia, altrimenti
+  // pre-scalda le domande fisse del check-up: se il file statico c'è lo lascia, altrimenti
   // le fa sintetizzare e cachare su Storage UNA volta (così la demo parte già "calda", senza Node).
   let _warmed=false;
   async function warmPrompts(){
@@ -846,9 +846,20 @@ const MGVoice = (function(){
 
 function speakQ(){
   if(chk.step<0 || chk.step>=CHK_Q.length) return;
-  MGVoice.speak(CHK_Q[chk.step].q, {cancelFirst:true});
+  MGVoice.speak(CHK_Q[chk.step].q, {cancelFirst:true, onend:()=>{
+    // dopo la domanda parte direttamente la registrazione (su iPhone serve toccare il microfono)
+    if(!IS_IOS && currentTab==='checkin' && chk.step>=0 && chk.step<CHK_Q.length && !chk.listening && !chk.sending && !chk.result) chkMic();
+  }});
 }
 function sttSupported(){ return !!(window.SpeechRecognition||window.webkitSpeechRecognition); }
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent||'') || ((navigator.platform==='MacIntel') && navigator.maxTouchPoints>1);
+function isStandalonePWA(){ try{ return window.navigator.standalone===true || (window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches); }catch(_){ return false; } }
+// messaggio di aiuto quando iOS blocca il riconoscimento vocale (errore "service-not-allowed")
+function iosVoiceHelp(){
+  if(IS_IOS && isStandalonePWA()) return 'Su iPhone la voce funziona solo in Safari, non con l\u2019app aperta dalla schermata Home. Apri Horus dal browser Safari per parlare (puoi sempre scrivere qui).';
+  if(IS_IOS) return 'Su iPhone attiva la dittatura per usare la voce: Impostazioni \u203a Generali \u203a Tastiera \u203a Abilita dittatura. In alternativa puoi scrivere qui.';
+  return 'Microfono non disponibile: controlla i permessi del browser. Puoi sempre scrivere qui.';
+}
 function chkMic(){
   if(chk.listening){ try{chk.rec&&chk.rec.stop();}catch(_){ } return; }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -913,9 +924,9 @@ function chkClose(){
   const wasBeforeMeds=chk.beforeMeds!==false;
   chk.step=-1; chk.result=null;
   currentTab='horus';
-  // nudge: dopo il check-in del mattino, se c'è terapia da prendere, Horus lo segnala
+  // nudge: dopo il check-up del mattino, se c'è terapia da prendere, Horus lo segnala
   if(chat.opened && wasBeforeMeds && STATE.today.checkin && pendingMorningMeds().length){
-    pushBot('Ottimo, check-in fatto! ✓ Ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?');
+    pushBot('Ottimo, check-up fatto! ✓ Ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?');
   }
   render({top:true});
 }
@@ -960,7 +971,7 @@ function voiceCtxOk(tipo){   // siamo ancora nel posto giusto per questo flusso 
   return currentTab==='test' && testView===tipo;
 }
 function testVoiceInstr(tipo){
-  if(tipo==='mgadl') return 'Check-in MG-ADL: otto domande informali, rispondi a voce. Quando sei pronto di\u2019 avvia per iniziare, oppure tocca il pulsante.';
+  if(tipo==='mgadl') return 'Check-up MG-ADL: otto domande informali, rispondi a voce. Quando sei pronto di\u2019 avvia per iniziare, oppure tocca il pulsante.';
   const i={
     ptosi:'Test della ptosi. Tieni il telefono all\u2019altezza degli occhi e fissa il punto in alto sullo schermo, senza distogliere lo sguardo. ',
     conta:'Conta in un respiro. Fai un respiro profondo e poi conta ad alta voce a ritmo costante, finch\u00e9 riesci senza riprendere fiato. ',
@@ -1005,7 +1016,7 @@ function testVoiceStart(tipo){
   if(!TEST_START_FN[tipo] || !testIsIdle(tipo)) return;
   testVoiceStop(); stopHomeVoice();
   testVoice.tipo=tipo; testVoice.paused=false; testVoice.armed=sttSupported();
-  // per il check-in: prima chiedo i farmaci (per aggiornare le spunte), poi attendo "avvia"
+  // per il check-up: prima chiedo i farmaci (per aggiornare le spunte), poi attendo "avvia"
   testVoice.stage = (tipo==='mgadl' && pendingMorningMeds().length) ? 'meds' : 'await';
   speakStageThenListen();
 }
@@ -1807,9 +1818,9 @@ function ScreenCheckin(){
   }
   if(chk.step<0){
     const last=STATE.scales[0];
-    return '<h2 style="font-size:21px;margin-top:10px;">Check-in vocale</h2>'+
+    return '<h2 style="font-size:21px;margin-top:10px;">Check-up vocale</h2>'+
     '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Otto domande informali, come una chiacchierata: rispondi a voce e l\u2019app compila la scala <b>MG-ADL</b> per il tuo medico. Idealmente al mattino, <b>prima dei farmaci</b>.</div>'+
-    (STATE.today.checkin?'<div class="card" style="margin-top:12px;background:var(--okSoft);box-shadow:none;font-size:13px;color:#1B4D33;">✓ Check-in di oggi già registrato'+(last?' (totale '+last.total+'/24)':'')+'. Puoi rifarlo, ad esempio dopo i farmaci.</div>':'')+
+    (STATE.today.checkin?'<div class="card" style="margin-top:12px;background:var(--okSoft);box-shadow:none;font-size:13px;color:#1B4D33;">✓ Check-up di oggi già registrato'+(last?' (totale '+last.total+'/24)':'')+'. Puoi rifarlo, ad esempio dopo i farmaci.</div>':'')+
     '<div class="card" style="margin-top:14px;">'+
       '<div class="switchrow" style="margin-top:0;background:var(--bg);"><div><div style="font-weight:700;font-size:13.5px;">Non ho ancora preso i farmaci</div><div style="font-size:11.5px;color:var(--inkSoft);">serve a interpretare i punteggi</div></div>'+
       '<label class="switch"><input type="checkbox" '+(chk.beforeMeds?'checked':'')+' onchange="chk.beforeMeds=this.checked"><i></i></label></div>'+
@@ -2021,11 +2032,11 @@ function ScreenTest(){
       (on?(done?'<span class="badge ok">fatto oggi ✓</span>':'<span class="badge neutral">'+SET.tests_time+'</span>'):'')+
       '</button>';
   };
-  // Check-in vocale MG-ADL incorporato tra i test (niente più tab dedicato in basso)
+  // Check-up vocale MG-ADL incorporato tra i test (niente più tab dedicato in basso)
   const ckDone=STATE.today.checkin;
   const checkinItem='<button onclick="goCheckin()" style="all:unset;cursor:pointer;display:flex;gap:13px;align-items:center;background:var(--card);border-radius:18px;padding:15px;margin-top:10px;width:100%;box-sizing:border-box;border-left:4px solid var(--voice);">'+
     '<span style="font-size:26px;flex-shrink:0;">📋</span>'+
-    '<span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:14.5px;">Check-in MG-ADL</span>'+
+    '<span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:14.5px;">Check-up MG-ADL</span>'+
     '<span style="display:block;font-size:12px;color:var(--inkSoft);margin-top:1px;">otto domande a voce · ~2 min'+(chk.beforeMeds!==false?' · prima dei farmaci':'')+'</span></span>'+
     (ckDone?'<span class="badge ok">fatto oggi ✓</span>':'<span class="badge neutral">'+SET.checkin_time+'</span>')+
     '</button>';
@@ -2059,15 +2070,15 @@ function ScreenTrend(){
            t.test_type==='conta'?'Conta · ≈'+(m.count_est??'—')+' ('+(m.phonation_s??'—')+'s)':
            'Arm drift · '+(m.hold_s??'—')+'s, '+(m.max_drift_deg??'—')+'°'; };
   let oggiRows='';
-  todayScales.forEach(s=>{ oggiRows+='<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">📋 Check-in MG-ADL · <b>'+s.total+'/24</b>'+(s.before_meds?' · prima dei farmaci':'')+'</span><span class="mono" style="font-size:11px;color:var(--inkSoft);flex-shrink:0;margin-left:8px;">'+fmtTime(s.taken_at)+'</span></div>'; });
+  todayScales.forEach(s=>{ oggiRows+='<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">📋 Check-up MG-ADL · <b>'+s.total+'/24</b>'+(s.before_meds?' · prima dei farmaci':'')+'</span><span class="mono" style="font-size:11px;color:var(--inkSoft);flex-shrink:0;margin-left:8px;">'+fmtTime(s.taken_at)+'</span></div>'; });
   todayTests.forEach(t=>{ const m=t.metrics||{}; oggiRows+='<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">'+testLbl(t)+'</span><span style="display:flex;gap:7px;align-items:center;flex-shrink:0;margin-left:8px;"><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'da monitorare':'ok')+'</span><span class="mono" style="font-size:11px;color:var(--inkSoft);">'+fmtTime(t.taken_at)+'</span></span></div>'; });
   const nOggi=todayScales.length+todayTests.length;
   const oggiSection='<div class="seclabel" style="margin-top:12px;">Oggi'+(nOggi?' · '+nOggi+' misur'+(nOggi===1?'a':'e'):'')+'</div>'+
-    '<div class="card">'+(oggiRows||'<div style="font-size:12.5px;color:var(--inkSoft);">Nessuna misura ancora oggi. Fai un check-in o un test per vederlo qui con l\u2019orario.</div>')+'</div>';
+    '<div class="card">'+(oggiRows||'<div style="font-size:12.5px;color:var(--inkSoft);">Nessuna misura ancora oggi. Fai un check-up o un test per vederlo qui con l\u2019orario.</div>')+'</div>';
   return '<h2 style="font-size:21px;margin-top:10px;">Andamento</h2>'+
   oggiSection+
-  '<div class="seclabel">MG-ADL dal check-in</div>'+
-  '<div class="card">'+(scSeries.length>=1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-in per iniziare la serie.</div>')+
+  '<div class="seclabel">MG-ADL dal check-up</div>'+
+  '<div class="card">'+(scSeries.length>=1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-up per iniziare la serie.</div>')+
   (STATE.scales.length?'<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">ultimo: <b>'+STATE.scales[0].total+'/24</b> · '+fmtDate(STATE.scales[0].taken_at)+' '+fmtTime(STATE.scales[0].taken_at)+(STATE.scales[0].before_meds?' · prima dei farmaci':'')+'</div>':'')+'</div>'+
   '<div class="seclabel">Parametri della voce · 14 giorni</div>'+
   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">'+
@@ -2095,7 +2106,7 @@ function openSettings(){
       '<div class="field"><label for="setLast">Cognome</label><input type="text" id="setLast" value="'+esc(SET.last_name)+'" placeholder="es. Rossi" autocapitalize="words"></div></div>'+
       '<div class="field"><label for="setCode">Codice paziente (assegnato a questo dispositivo)</label><input type="text" id="setCode" value="'+esc(SET.code)+'"></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'+
-      '<div class="field"><label for="setCheckin">Check-in vocale</label><input type="time" id="setCheckin" value="'+SET.checkin_time+'"></div>'+
+      '<div class="field"><label for="setCheckin">Check-up vocale</label><input type="time" id="setCheckin" value="'+SET.checkin_time+'"></div>'+
       '<div class="field"><label for="setMeds">Farmaci del mattino</label><input type="time" id="setMeds" value="'+SET.meds_time+'"></div></div>'+
     '<div class="seclabel">Test su notifica</div>'+
     '<div class="field" style="margin-top:6px;"><label for="setTests">Orario dei test</label><input type="time" id="setTests" value="'+SET.tests_time+'"></div>'+
@@ -2103,7 +2114,7 @@ function openSettings(){
     sw('swConta',en.conta,'Conta in un respiro','riserva respiratoria · microfono')+
     sw('swArm',en.armdrift,'Arm drift','tenuta del braccio · sensori movimento')+
     '<div class="seclabel">Voce e notifiche</div>'+
-    sw('swTts',SET.tts,'Leggi le domande ad alta voce','sintesi vocale del check-in')+
+    sw('swTts',SET.tts,'Leggi le domande ad alta voce','sintesi vocale del check-up')+
     '<div class="field" style="margin-top:10px;"><label for="setVoiceMode">Voce dell\u2019assistente</label>'+
       '<select id="setVoiceMode" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink);">'+
         '<option value="system"'+(SET.voiceMode!=='google'?' selected':'')+'>Voce di sistema · gratuita, offline</option>'+
@@ -2187,7 +2198,7 @@ async function testPush(){
 /* ============================================================
    TERAPIA — piano dei farmaci e assunzioni
    Il paziente registra nome, dose e orario di ogni farmaco e
-   segna quando lo prende. Al mattino: prima il check-in, poi la
+   segna quando lo prende. Al mattino: prima il check-up, poi la
    terapia (Horus lo ricorda). I dati stanno in `medications` e
    `med_intakes` su Supabase.
    ============================================================ */
@@ -2279,9 +2290,9 @@ function ScreenTerapia(){
   let banner='';
   if(meds.length){
     if(pendMorning.length && !checkinDone){
-      banner='<div class="card" style="background:var(--warnSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:var(--warn);line-height:1.5;">☀️ Al mattino fai <b>prima il check-in</b>, poi prendi la terapia: così la misura della voce non è influenzata dai farmaci. <button class="btn small" style="margin-top:8px;" onclick="setTab(\u0027checkin\u0027)">Vai al check-in</button></div></div>';
+      banner='<div class="card" style="background:var(--warnSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:var(--warn);line-height:1.5;">☀️ Al mattino fai <b>prima il check-up</b>, poi prendi la terapia: così la misura della voce non è influenzata dai farmaci. <button class="btn small" style="margin-top:8px;" onclick="setTab(\u0027checkin\u0027)">Vai al check-up</button></div></div>';
     } else if(pendMorning.length && checkinDone){
-      banner='<div class="card" style="background:var(--okSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:#1B4D33;line-height:1.5;">✓ Check-in fatto: ora puoi prendere la terapia del mattino e segnarla qui sotto.</div></div>';
+      banner='<div class="card" style="background:var(--okSoft);box-shadow:none;padding:12px 15px;margin-top:12px;"><div style="font-size:13px;color:#1B4D33;line-height:1.5;">✓ Check-up fatto: ora puoi prendere la terapia del mattino e segnarla qui sotto.</div></div>';
     }
   }
   // sezione "oggi"
@@ -2384,7 +2395,7 @@ function dispatchHorus(action){
 
 /* etichetta breve per i pulsanti rapidi e per i messaggi locali */
 function actionLabel(name,tipo){
-  return ({avvia_collana:'la collana',avvia_checkin:'il check-in',registra_baseline:'la registrazione del baseline',
+  return ({avvia_collana:'la collana',avvia_checkin:'il check-up',registra_baseline:'la registrazione del baseline',
     apri_andamento:"l'andamento",apri_terapia:'la terapia',segna_terapia:'la terapia come presa',apri_impostazioni:'le impostazioni',
     avvia_test:({ptosi:'il test della ptosi',conta:'la conta in un respiro',armdrift:"l'arm drift"}[tipo]||'il test')}[name])||'';
 }
@@ -2418,23 +2429,23 @@ async function chatSend(text,opts){
 function localHorusReply(text,opts){
   const ctx=buildChatContext();
   if(opts.opening || !text){
-    const pend=[]; if(!ctx.checkin_done) pend.push('il check-in');
+    const pend=[]; if(!ctx.checkin_done) pend.push('il check-up');
     ctx.tests.filter(t=>!t.done).forEach(t=>pend.push(t.label.toLowerCase()));
     const hi='Ciao'+(ctx.name?' '+ctx.name:'')+'! Sono Horus.';
     let body;
     if(pend.length){
       body=' Per oggi ti manca '+(pend.length>1?pend.slice(0,-1).join(', ')+' e '+pend.slice(-1):pend[0])+'.';
-      if(ctx.morning_med_pending) body+=' Poi, dopo il check-in, potrai prendere la terapia.';
+      if(ctx.morning_med_pending) body+=' Poi, dopo il check-up, potrai prendere la terapia.';
       body+=' Vuoi che cominciamo? Usa i pulsanti qui sotto.';
     } else if(ctx.morning_med_pending){
-      body=' Il check-in è fatto: ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?';
+      body=' Il check-up è fatto: ora puoi prendere la terapia del mattino. Vuoi che la segni come presa?';
     } else {
       body=' Per oggi sei in pari, complimenti. Se vuoi possiamo registrare un po\u2019 di voce o vedere l\u2019andamento.';
     }
     chat.msgs.push({role:'assistant',text:hi+body}); say(hi+body);
     return;
   }
-  { const t='Posso avviare per te la collana, il check-in MG-ADL, i test, la terapia o l\u2019andamento: scegli un pulsante qui sotto.'+(!SBOK?' (Sto funzionando in locale: collega Supabase per il dialogo completo.)':''); chat.msgs.push({role:'assistant',text:t}); say(t); }
+  { const t='Posso avviare per te la collana, il check-up MG-ADL, i test, la terapia o l\u2019andamento: scegli un pulsante qui sotto.'+(!SBOK?' (Sto funzionando in locale: collega Supabase per il dialogo completo.)':''); chat.msgs.push({role:'assistant',text:t}); say(t); }
 }
 
 /* dettatura per la chat */
@@ -2461,7 +2472,7 @@ function chatMic(){
     render();
     if(finalText) chatSend(finalText);   // il messaggio parte da solo, senza premere la freccia
   };
-  rec.onerror=e=>{ chat.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
+  rec.onerror=e=>{ chat.listening=false; if(e.error==='service-not-allowed'||e.error==='not-allowed') toast(iosVoiceHelp()); else if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
   chat.rec=rec; chat.listening=true; render();
   try{ rec.start(); }catch(_){ chat.listening=false; render(); }
 }
@@ -2491,7 +2502,7 @@ function fabVisible(){
 function micBusyElsewhere(){
   return (typeof sbcTest!=='undefined' && sbcTest.phase==='running')   // la conta misura la voce
       || (typeof lis!=='undefined' && lis.phase==='running')           // la collana registra
-      || (typeof chk!=='undefined' && chk.listening);                  // il check-in detta le risposte
+      || (typeof chk!=='undefined' && chk.listening);                  // il check-up detta le risposte
 }
 function lastBotMsg(){ for(let i=chat.msgs.length-1;i>=0;i--){ if(chat.msgs[i].role==='assistant') return chat.msgs[i].text; } return null; }
 function fabToggle(){
@@ -2517,11 +2528,16 @@ function fabMicStart(){
     fab.live=(finalTxt+interim).trim();
     const el=document.getElementById('fabLive'); if(el) el.textContent=fab.live||'Ti ascolto…';
   };
-  rec.onerror=e=>{ fab.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ fab.micOn=false; } render(); };
+  rec.onerror=e=>{ fab.listening=false;
+    if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ fab.micOn=false;
+      if(e.error==='service-not-allowed'||e.error==='not-allowed'){ const m=iosVoiceHelp(); if(!chat.msgs.length||chat.msgs[chat.msgs.length-1].text!==m){ chat.msgs.push({role:'assistant',text:m}); } }
+    }
+    render();
+  };
   rec.onend=()=>{ fab.listening=false; const said=(finalTxt||fab.live||'').trim(); fab.live='';
     if(said){ fab.micOn=false; render(); fabHeard(said); return; }   // dopo una frase il microfono si spegne (icona coerente)
-    else if(fab.micOn && fabVisible() && !micBusyElsewhere()){ setTimeout(()=>{ if(fab.micOn && !fab.listening && fabVisible() && !micBusyElsewhere()) fabMicStart(); },180); }
-    else render();
+    else if(fab.micOn && fabVisible() && !micBusyElsewhere() && !IS_IOS){ setTimeout(()=>{ if(fab.micOn && !fab.listening && fabVisible() && !micBusyElsewhere()) fabMicStart(); },180); }  // iOS: tap-to-talk, niente riavvio automatico
+    else { fab.micOn=false; render(); }
   };
   fab.rec=rec; fab.listening=true; render();
   try{ rec.start(); }catch(_){ fab.listening=false; render(); }
@@ -2542,7 +2558,7 @@ function fabHeard(text){
   }
   // "torna indietro" → home
   if(isBackCmd(text)){ chat.msgs.push({role:'user',text:text}); voiceBack(); return; }
-  // "avvia" sulla pagina di un test/check-in in attesa
+  // "avvia" sulla pagina di un test/check-up in attesa
   if(currentTab==='test' && isStartCmd(text)){ const tv=testView;
     if(['ptosi','conta','armdrift'].includes(tv) && testIsIdle(tv)){ chat.msgs.push({role:'user',text:text}); fabMicStop(); TEST_START_FN[tv](); return; } }
   if(currentTab==='checkin' && isStartCmd(text) && chk.step<0){ chat.msgs.push({role:'user',text:text}); fabMicStop(); chkBegin(); return; }
@@ -2589,7 +2605,7 @@ function proposeTherapyChange(tc){
   else { const t=tc.target;
     msg='Cambio '+t.name+(t.dose?' '+t.dose:'')+(t.time_of_day?' ore '+String(t.time_of_day).slice(0,5):'')+' con '+tc.name+(tc.dose?' '+tc.dose:'')+(tc.time?' ore '+tc.time.slice(0,5):'')+'?'; }
   chat.msgs.push({role:'assistant',text:msg});
-  say(msg, ()=>{ if(fab.open && fabVisible() && !micBusyElsewhere() && fab.pendingMed) fabMicStart(); });
+  say(msg, ()=>{ if(!IS_IOS && fab.open && fabVisible() && !micBusyElsewhere() && fab.pendingMed) fabMicStart(); });
   render();
 }
 async function applyTherapyChange(tc){
@@ -2616,11 +2632,11 @@ function renderFab(){
     const side=(SET&&SET.fab_side==='left')?'left':'right';
     root.innerHTML='<div class="fab '+side+'">'+
       '<button class="fab-eye'+(fab.listening?' live':'')+'" onclick="fabToggle()" aria-label="Apri l\u2019assistente Horus">'+eyeImg+'</button>'+
-      (last?'<div class="fab-bubble" onclick="fabToggle()"><div class="who">HORUS</div>'+esc(last.length>120?last.slice(0,118)+'…':last)+'</div>':'')+
+      (last?(function(){ const p=String(last).replace(/\*\*|__|`|^#{1,6}\s*|^\s*[-*]\s+/gm,'').replace(/\s+/g,' ').trim(); return '<div class="fab-bubble" onclick="fabToggle()"><div class="who">HORUS</div>'+esc(p.length>120?p.slice(0,118)+'…':p)+'</div>'; })():'')+
     '</div>';
     return;
   }
-  const msgs=chat.msgs.slice(-6).map(m=>'<div class="fab-msg '+(m.role==='assistant'?'bot':'me')+'">'+esc(m.text)+'</div>').join('')
+  const msgs=chat.msgs.slice(-6).map(m=>'<div class="fab-msg '+(m.role==='assistant'?'bot':'me')+'">'+(m.role==='assistant'?mdLite(m.text):esc(m.text))+'</div>').join('')
     || '<div style="font-size:12.5px;color:var(--inkSoft);">Dimmi pure: posso aprire una pagina, spiegarti l\u2019andamento o aggiornare la terapia.</div>';
   const micSupported=sttSupported();
   root.innerHTML='<div class="fab-panel">'+
@@ -2670,7 +2686,7 @@ function chip(name,tipo){
 
 /* ============================================================
    AVVIO GUIDATO — routine vocale DETERMINISTICA (niente modello)
-   All'apertura Horus legge a voce le domande del mattino (check-in,
+   All'apertura Horus legge a voce le domande del mattino (check-up,
    test, terapia) e ascolta un "sì/no". Se la risposta non è
    classificabile, passa la parola alla chat AI.
    ============================================================ */
@@ -2690,14 +2706,14 @@ function toggleHorusMute(){
 }
 
 function routineSteps(){
-  // ordine del mattino: prima il check-in MG-ADL, poi la terapia (i test fisici sono sperimentali e restano facoltativi, fuori dalla routine)
+  // ordine del mattino: prima il check-up MG-ADL, poi la terapia (i test fisici sono sperimentali e restano facoltativi, fuori dalla routine)
   const s=[];
   if(!STATE.today.checkin) s.push('checkin');
   if(pendingMorningMeds().length) s.push('therapy');
   return s;
 }
 function routinePrompt(step){
-  if(step==='checkin') return 'Iniziamo dal check-in, per capire come stai oggi: vuoi farlo ora?';
+  if(step==='checkin') return 'Iniziamo dal check-up, per capire come stai oggi: vuoi farlo ora?';
   if(step==='tests'){
     const en=SET.tests_enabled||{}, L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
     const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]).map(k=>L[k]);
@@ -2721,7 +2737,8 @@ function startRoutine(){
 }
 function routineAsk(){
   const q=routinePrompt(chat.routine.steps[chat.routine.step]);
-  pushBot(q, {onend: ()=>{ if(chat.routine.active && chat.routine.armed && !chat.routine.listening) routineListen(); }});
+  // iOS blocca l'avvio del microfono fuori da un tocco: niente ascolto automatico, restano i pulsanti Sì/No e il microfono
+  pushBot(q, {onend: ()=>{ if(!IS_IOS && chat.routine.active && chat.routine.armed && !chat.routine.listening) routineListen(); }});
   render({bottom:true});
 }
 function routineStopListen(){ try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; }
@@ -2735,13 +2752,13 @@ function routineListen(){
   const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
   let txt='';
   rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
-  rec.onerror=e=>{ chat.routine.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ chat.routine.armed=false; chat.routine.paused=true; } render(); };
+  rec.onerror=e=>{ chat.routine.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ chat.routine.armed=false; chat.routine.paused=true; if(e.error==='service-not-allowed'||e.error==='not-allowed') toast(iosVoiceHelp()); } render(); };
   rec.onend=()=>{
     chat.routine.listening=false;
     const t=txt.trim();
     if(t){ render(); routineHeard(t); return; }
-    // niente sentito: il microfono resta attivo finché la routine è in corso e non è in pausa
-    if(chat.routine.active && chat.routine.armed && !chat.routine.paused && currentTab==='horus'){
+    // niente sentito: il microfono resta attivo (tranne su iOS, dove serve un tocco)
+    if(!IS_IOS && chat.routine.active && chat.routine.armed && !chat.routine.paused && currentTab==='horus'){
       setTimeout(()=>{ if(chat.routine.active && !chat.routine.paused && !chat.routine.listening && currentTab==='horus') routineListen(); }, 150);
     } else render();
   };
@@ -2781,7 +2798,7 @@ function routineAnswer(value){
   routineStopListen();
   const step=chat.routine.steps[chat.routine.step];
   if(step==='checkin'){
-    if(value==='yes'){ pushBot('Perfetto, apro il check-in.'); chat.routine.active=false; say('Apro il check-in.'); dispatchHorus({name:'avvia_checkin'}); return; }
+    if(value==='yes'){ pushBot('Perfetto, apro il check-up.'); chat.routine.active=false; say('Apro il check-up.'); dispatchHorus({name:'avvia_checkin'}); return; }
     pushBot('Va bene, lo farai più tardi.');
   } else if(step==='tests'){
     if(value==='yes'){ pushBot('Apro i test.'); chat.routine.active=false; say('Apro i test.'); routineOpenTests(); return; }
@@ -2821,7 +2838,7 @@ function ScreenHorus(){
   if(chat.busy) thread+='<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;padding:4px 6px;"><div class="typing"><span></span><span></span><span></span></div></div></div>';
   if(chat.error) thread+='<div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;text-align:center;">Horus è in modalità locale ('+esc(chat.error)+').</div>';
 
-  // I pulsanti rapidi (check-in/test/terapia/collana/andamento) sono stati rimossi dalla home:
+  // I pulsanti rapidi (check-up/test/terapia/collana/andamento) sono stati rimossi dalla home:
   // l'interazione qui è guidata dalla voce di Horus. La navigazione manuale resta nella barra in basso.
   let chips='';
   if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>';
@@ -2970,10 +2987,10 @@ function setTab(id){
   }
   currentTab=id; render({top:true});
 }
-// schermate raggiungibili senza pulsante in basso (il check-in vive dentro i Test)
+// schermate raggiungibili senza pulsante in basso (il check-up vive dentro i Test)
 const HIDDEN_SCREENS={ checkin:ScreenCheckin };
 function screenFn(id){ const t=TABS.find(x=>x.id===id); return t?t.fn:(HIDDEN_SCREENS[id]||TABS[0].fn); }
-function navActiveFor(id){ return id==='checkin'?'test':id; }   // il check-in evidenzia il tab Test
+function navActiveFor(id){ return id==='checkin'?'test':id; }   // il check-up evidenzia il tab Test
 // icona del tab Horus = occhio dell'app (bianco sul pill attivo, verde quando inattivo)
 function horusTabIcon(active){
   return '<img src="icons/eye-'+(active?'white':'green')+'.png" width="21" height="21" alt="" style="display:block;object-fit:contain;">';
