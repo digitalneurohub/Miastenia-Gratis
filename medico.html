@@ -133,7 +133,7 @@ function scatterChart(pairs, opt){
   // pairs: [{adl, val, day}] · opt.yLabel = etichetta del parametro reale sull'asse Y
   opt=opt||{}; const yLabel=opt.yLabel||'valore';
   const w=460,h=210,padL=44,padB=30,padT=10,padR=12;
-  if(!pairs || pairs.length<1) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Serve almeno una giornata con check-in <b>e</b> ascolto della collana nello stesso giorno.</div>';
+  if(!pairs || pairs.length<1) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Serve almeno una giornata con check-up <b>e</b> ascolto della collana nello stesso giorno.</div>';
   const xs=pairs.map(p=>p.adl), ys=pairs.map(p=>p.val);
   const mnX=0, mxX=Math.max(10,Math.max(...xs)+1);
   let mnY=Math.min(...ys), mxY=Math.max(...ys);
@@ -304,7 +304,7 @@ function buildDemo(){
           message:'HNR in calo e instabilità vocale (shimmer/jitter) in aumento per più giorni: possibile peggioramento bulbare, valutare contatto', created_at:at.toISOString()});
       } else if(idx>=70 && !alertedWarn && !alertedAlert){
         alertedWarn=true; const at=new Date(dayDate); at.setHours(19,5,0,0);
-        alerts.push({patient_id:id, level:'warn', source:'check-in',
+        alerts.push({patient_id:id, level:'warn', source:'check-up',
           message:'parametri vocali in peggioramento rispetto al riferimento personale (HNR più basso, pause in aumento)', created_at:at.toISOString()});
       }
     }
@@ -391,7 +391,7 @@ function draw(){
   const app=document.getElementById('app');
   if(typeof MG_CONFIG!=='undefined') document.getElementById('brandName').textContent=MG_CONFIG.APP_NAME;
   if(!DB.patients.length){
-    app.innerHTML='<div class="card" style="max-width:640px;">Nessun paziente ancora registrato: apri l\u2019app paziente, imposta un codice nelle impostazioni e avvia la collana o un check-in.</div>';
+    app.innerHTML='<div class="card" style="max-width:640px;">Nessun paziente ancora registrato: apri l\u2019app paziente, imposta un codice nelle impostazioni e avvia la collana o un check-up.</div>';
     return;
   }
   const list=DB.patients.map(p=>{
@@ -468,14 +468,14 @@ function draw(){
   '<main>'+
     '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'+
       '<div><div style="font-weight:700;font-size:18px;">'+esc(p.code)+(pName(p)?' · '+esc(pName(p)):'')+'</div>'+
-      '<div style="font-size:12px;color:var(--inkSoft);margin-top:2px;">check-in '+String(p.checkin_time||'').slice(0,5)+' · test '+String(p.tests_time||'').slice(0,5)+' · fuso '+esc(p.tz)+'</div></div>'+
+      '<div style="font-size:12px;color:var(--inkSoft);margin-top:2px;">check-up '+String(p.checkin_time||'').slice(0,5)+' · test '+String(p.tests_time||'').slice(0,5)+' · fuso '+esc(p.tz)+'</div></div>'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">'+
       (function(){ const bs=DB.baselines.filter(x=>x.patient_id===selId);
         return bs.length? '<span class="badge neutral" title="finestre di riferimento fissate dal paziente">⭐ baseline personale · '+fmtD(bs[0].started_at)+'</span>' : '<span class="badge warn" title="il paziente non ha ancora fissato un riferimento">baseline automatico</span>'; })()+
       '<span class="badge voice">collana: microfono (demo)</span></div></div>'+
       '<div class="tiles" style="margin-top:14px;">'+
         '<div class="tile"><div class="v">'+(ls?ls.total+'<span style="font-size:13px;color:var(--inkSoft);">/24</span>':'—')+'</div><div class="l">ultima MG-ADL'+(ls?' · '+fmtD(ls.taken_at):'')+'</div></div>'+
-        '<div class="tile"><div class="v">'+last7days.size+'/7</div><div class="l">aderenza check-in · 7 giorni</div></div>'+
+        '<div class="tile"><div class="v">'+last7days.size+'/7</div><div class="l">aderenza check-up · 7 giorni</div></div>'+
         '<div class="tile"><div class="v">'+Math.round(min7)+'\u2032</div><div class="l">voce analizzata · 7 giorni</div></div>'+
       '</div></div>'+
 
@@ -493,8 +493,8 @@ function draw(){
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">'+PARAMS.map(P=>paramCard(daily,P)).join('')+'</div>'+
     '<div style="margin-top:13px;">'+paramDetail(daily)+'</div>'+
 
-    '<div class="seclabel">Check-in recenti</div>'+
-    '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>totale</th><th>farmaci</th><th>item chiave</th><th>affidab.</th></tr></thead><tbody>'+(scaleRows||'<tr><td colspan="5" style="color:var(--inkSoft);">nessun check-in</td></tr>')+'</tbody></table></div>'+
+    '<div class="seclabel">Check-up recenti</div>'+
+    '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>totale</th><th>farmaci</th><th>item chiave</th><th>affidab.</th></tr></thead><tbody>'+(scaleRows||'<tr><td colspan="5" style="color:var(--inkSoft);">nessun check-up</td></tr>')+'</tbody></table></div>'+
 
     '<div class="seclabel">Test strumentali</div>'+
     '<div class="card" style="overflow-x:auto;"><table><thead><tr><th>quando</th><th>test</th><th>misure</th><th>esito</th></tr></thead><tbody>'+(testRows||'<tr><td colspan="4" style="color:var(--inkSoft);">nessun test</td></tr>')+'</tbody></table></div>'+
