@@ -12,6 +12,7 @@
     --ok:#2D7A52; --okSoft:#DCEBDF; --warn:#A8730F; --warnSoft:#F6ECD7; --alert:#B3372E; --alertSoft:#F8E5E2;
   }
   *{box-sizing:border-box;}
+  html,body{max-width:100%;overflow-x:hidden;}
   body{margin:0;font-family:'Albert Sans',system-ui,sans-serif;color:var(--ink);background:var(--bg);min-height:100vh;}
   .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
   button{font-family:inherit;cursor:pointer;}
@@ -27,6 +28,7 @@
   .btn{background:var(--card);color:#1B4D33;border:2px solid #C7D7CC;border-radius:999px;padding:9px 16px;font-size:13.5px;font-weight:700;}
   .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
   .grid{display:grid;grid-template-columns:300px 1fr;gap:16px;margin-top:16px;align-items:start;}
+  .grid>*{min-width:0;}
   @media(max-width:860px){ .grid{grid-template-columns:1fr;} }
   .plist{display:flex;flex-direction:column;gap:9px;}
   .prow{all:unset;cursor:pointer;background:var(--card);border-radius:16px;padding:13px 14px;box-shadow:0 3px 12px rgba(27,58,42,.05);border:2px solid transparent;}
@@ -40,6 +42,7 @@
   th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--inkSoft);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);}
   td{padding:7px 8px;border-bottom:1px solid var(--bg);}
   .charts2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .charts2>*{min-width:0;}
   @media(max-width:760px){ .charts2{grid-template-columns:1fr;} }
 </style>
 </head>
@@ -71,11 +74,10 @@ const C={primary:'#2D7A52',voice:'#1F6E78',alert:'#B3372E',warn:'#A8730F',inkSof
 let sb=null;
 const DB={patients:[],daily:[],scales:[],tests:[],alerts:[],baselines:[],meds:[],intakes:[]};
 let selId=null;
-let selParam='vocal_index';
+let selParam='hnr';
 /* parametri vocali aggregati (colonne della vista vocal_daily).
    dir: come leggere un aumento — higherWorse (peggio se sale), higherBetter (meglio se sale), neutral. */
 const PARAMS=[
-  {k:'vocal_index',     label:'Indice vocale',   unit:'',    dec:0, dir:'higherWorse',  base:50, hint:'composito · 50 = baseline, ↑ = peggio'},
   {k:'hnr',             label:'HNR',             unit:' dB', dec:1, dir:'higherBetter', hint:'rapporto armonico/rumore · ↑ = meglio'},
   {k:'shimmer',         label:'Shimmer',         unit:' %',  dec:2, dir:'higherWorse',  hint:'instabilità d\u2019ampiezza · ↑ = peggio'},
   {k:'jitter',          label:'Jitter',          unit:' %',  dec:2, dir:'higherWorse',  hint:'instabilità di frequenza · ↑ = peggio'},
@@ -126,17 +128,18 @@ function pearson(xs,ys){
   const den=Math.sqrt(dx*dy);
   return den>0?num/den:null;
 }
-function scatterChart(pairs){
-  // pairs: [{adl, idx, day}]
-  const w=460,h=210,padL=40,padB=30,padT=10,padR=12;
+function scatterChart(pairs, opt){
+  // pairs: [{adl, val, day}] · opt.yLabel = etichetta del parametro reale sull'asse Y
+  opt=opt||{}; const yLabel=opt.yLabel||'valore';
+  const w=460,h=210,padL=44,padB=30,padT=10,padR=12;
   if(!pairs || pairs.length<1) return '<div style="font-size:12px;color:var(--inkSoft);padding:18px 0;">Serve almeno una giornata con check-in <b>e</b> ascolto della collana nello stesso giorno.</div>';
-  const xs=pairs.map(p=>p.adl), ys=pairs.map(p=>p.idx);
+  const xs=pairs.map(p=>p.adl), ys=pairs.map(p=>p.val);
   const mnX=0, mxX=Math.max(10,Math.max(...xs)+1);
-  const mnY=Math.min(40,Math.min(...ys)-3), mxY=Math.max(60,Math.max(...ys)+3);
+  let mnY=Math.min(...ys), mxY=Math.max(...ys);
+  if(mxY-mnY<1e-6){ mxY+=1; mnY-=1; } else { const pd=(mxY-mnY)*0.12; mnY-=pd; mxY+=pd; }
   const X=v=>padL+(v-mnX)/(mxX-mnX)*(w-padL-padR);
   const Y=v=>padT+(1-(v-mnY)/(mxY-mnY))*(h-padT-padB);
   const r=pearson(xs,ys);
-  // retta di regressione semplice per leggibilità
   let reg='';
   if(r!=null){
     const mx=avg(xs),my=avg(ys);
@@ -144,14 +147,15 @@ function scatterChart(pairs){
     if(den>0){ const b=num/den,a=my-b*mx;
       reg='<line x1="'+X(mnX)+'" y1="'+Y(a+b*mnX).toFixed(1)+'" x2="'+X(mxX)+'" y2="'+Y(a+b*mxX).toFixed(1)+'" stroke="'+C.voice+'" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.7"/>'; }
   }
+  const fy=v=>Math.round(v*10)/10;
   const gridY=[mnY,(mnY+mxY)/2,mxY].map(v=>'<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" stroke="#E5ECE6"/>'+
-    '<text x="'+(padL-5)+'" y="'+(Y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="'+C.inkSoft+'">'+Math.round(v)+'</text>').join('');
+    '<text x="'+(padL-5)+'" y="'+(Y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9.5" fill="'+C.inkSoft+'">'+fy(v)+'</text>').join('');
   const gridX=[0,Math.round(mxX/2),Math.round(mxX)].map(v=>'<text x="'+X(v).toFixed(1)+'" y="'+(h-12)+'" text-anchor="middle" font-size="9.5" fill="'+C.inkSoft+'">'+v+'</text>').join('');
-  const dots=pairs.map(p=>'<circle cx="'+X(p.adl).toFixed(1)+'" cy="'+Y(p.idx).toFixed(1)+'" r="4.4" fill="'+C.voice+'" opacity="0.78"><title>'+esc(p.day)+' · MG-ADL '+p.adl+' · indice '+p.idx.toFixed(1)+'</title></circle>').join('');
+  const dots=pairs.map(p=>'<circle cx="'+X(p.adl).toFixed(1)+'" cy="'+Y(p.val).toFixed(1)+'" r="4.4" fill="'+C.voice+'" opacity="0.78"><title>'+esc(p.day)+' · MG-ADL '+p.adl+' · '+esc(yLabel)+' '+fy(p.val)+'</title></circle>').join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+gridY+reg+dots+gridX+
     '<text x="'+((padL+w-padR)/2)+'" y="'+(h-1)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'">MG-ADL totale (0–24)</text>'+
-    '<text x="11" y="'+((padT+h-padB)/2)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'" transform="rotate(-90 11 '+((padT+h-padB)/2)+')">indice vocale</text></svg>'+
-    '<div style="font-size:12px;color:var(--inkSoft);margin-top:5px;">r di Pearson = <b class="mono">'+(r!=null?r.toFixed(2):'—')+'</b> su '+pairs.length+' giornate appaiate (stesso giorno: media indice ↔ totale scala)</div>';
+    '<text x="11" y="'+((padT+h-padB)/2)+'" text-anchor="middle" font-size="10" fill="'+C.inkSoft+'" transform="rotate(-90 11 '+((padT+h-padB)/2)+')">'+esc(yLabel)+'</text></svg>'+
+    '<div style="font-size:12px;color:var(--inkSoft);margin-top:5px;">r di Pearson = <b class="mono">'+(r!=null?r.toFixed(2):'—')+'</b> su '+pairs.length+' giornate appaiate (stesso giorno: media '+esc(yLabel)+' ↔ totale scala)</div>';
 }
 
 /* ---------- parametri aggregati + drill-down ---------- */
@@ -215,7 +219,7 @@ function mulberry32(seed){ let a=seed>>>0; return function(){ a|=0; a=(a+0x6D2B7
 const dclamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 function isoDayAgo(n){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-n); return d; }
 
-/* archetipi clinici: come evolve l'indice vocale (50=baseline, piu' alto = peggio) */
+/* archetipi clinici: severità latente che guida i parametri reali (più alta = voce peggiore) */
 const DEMO_PROFILES=[
   {code:'PZ-D01', first:'Elena',  last:'Bianchi',  sex:'F', seed:101, tz:'Europe/Rome', checkin:'08:00', tests:'08:15', days:DEMO_DAYS, baselineFixed:true,  arc:'stable',      adherence:0.95},
   {code:'PZ-D02', first:'Marco',  last:'De Santis',sex:'M', seed:202, tz:'Europe/Rome', checkin:'07:30', tests:'20:00', days:DEMO_DAYS, baselineFixed:true,  arc:'worsening',   adherence:0.90},
@@ -277,7 +281,7 @@ function buildDemo(){
       const slope=dclamp(-(idx-50)*0.02+(rnd()-0.5)*0.2, -1.4, 0.4);
       const f0=Math.round(f0base+(rnd()-0.5)*6-(idx-50)*0.1);
       const tot=Math.round(dclamp(120-(idx-50)*0.8+(rnd()-0.5)*40, 25, 200));
-      daily.push({patient_id:id, day:dayStr, vocal_index:+idx.toFixed(1), hnr:+hnr.toFixed(1),
+      daily.push({patient_id:id, day:dayStr, vocal_index:null, hnr:+hnr.toFixed(1),
         shimmer:+shimmer.toFixed(2), jitter:+jitter.toFixed(2), pause_ratio:+pause.toFixed(1),
         intensity_slope:+slope.toFixed(2), f0, tot_s:tot});
 
@@ -296,11 +300,11 @@ function buildDemo(){
       if(idx>=85 && hi70>=3 && !alertedAlert){
         alertedAlert=true; const at=new Date(dayDate); at.setHours(18,42,0,0);
         alerts.push({patient_id:id, level:'alert', source:'collana',
-          message:'indice vocale >=85 per piu\u2019 giorni con HNR in calo: possibile peggioramento bulbare, valutare contatto', created_at:at.toISOString()});
+          message:'HNR in calo e instabilità vocale (shimmer/jitter) in aumento per più giorni: possibile peggioramento bulbare, valutare contatto', created_at:at.toISOString()});
       } else if(idx>=70 && !alertedWarn && !alertedAlert){
         alertedWarn=true; const at=new Date(dayDate); at.setHours(19,5,0,0);
         alerts.push({patient_id:id, level:'warn', source:'check-in',
-          message:'indice vocale sopra la soglia gialla rispetto al baseline personale', created_at:at.toISOString()});
+          message:'parametri vocali in peggioramento rispetto al riferimento personale (HNR più basso, pause in aumento)', created_at:at.toISOString()});
       }
     }
 
@@ -376,10 +380,6 @@ async function loadAll(){
   }
 }
 const byP=(arr)=>arr.filter(r=>r.patient_id===selId);
-function lastIdxOf(pid){
-  const d=DB.daily.filter(r=>r.patient_id===pid && r.vocal_index!=null);
-  return d.length?d[d.length-1]:null;
-}
 function lastScaleOf(pid){
   const s=DB.scales.filter(r=>r.patient_id===pid);
   return s.length?s[s.length-1]:null;
@@ -394,15 +394,13 @@ function draw(){
     return;
   }
   const list=DB.patients.map(p=>{
-    const li=lastIdxOf(p.id), ls=lastScaleOf(p.id);
+    const ls=lastScaleOf(p.id);
     const alertN=DB.alerts.filter(a=>a.patient_id===p.id && (Date.now()-new Date(a.created_at))<7*864e5).length;
-    const tone=li&&li.vocal_index>=85?'alert':li&&li.vocal_index>=70?'warn':'ok';
     return '<button class="prow '+(p.id===selId?'sel':'')+'" onclick="selId=\u0027'+p.id+'\u0027;draw()">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'+
         '<div style="min-width:0;"><div style="font-weight:700;font-size:14px;">'+esc(p.code)+(pName(p)?' · '+esc(pName(p)):'')+'</div>'+
         '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:2px;">MG-ADL '+(ls?ls.total+'/24 ('+fmtD(ls.taken_at)+')':'—')+'</div></div>'+
-        '<div style="text-align:right;flex-shrink:0;"><span class="badge '+tone+'">indice '+(li?Math.round(li.vocal_index):'—')+'</span>'+
-        (alertN?'<div style="margin-top:4px;"><span class="badge alert">'+alertN+' alert 7g</span></div>':'')+'</div></div></button>';
+        '<div style="text-align:right;flex-shrink:0;">'+(alertN?'<span class="badge alert">'+alertN+' alert 7g</span>':'')+'</div></div></button>';
   }).join('');
 
   const p=DB.patients.find(x=>x.id===selId);
@@ -410,22 +408,18 @@ function draw(){
   const meds=byP(DB.meds), intakes=byP(DB.intakes);
 
   // tiles
-  const li=lastIdxOf(selId);
-  const idx7=avg(daily.slice(-7).map(d=>d.vocal_index).filter(v=>v!=null));
-  const idxPrev7=avg(daily.slice(-14,-7).map(d=>d.vocal_index).filter(v=>v!=null));
-  const delta=(idx7!=null&&idxPrev7!=null)?idx7-idxPrev7:null;
   const ls=scales[scales.length-1];
   const last7days=new Set(scales.filter(s=>(Date.now()-new Date(s.taken_at))<7*864e5).map(s=>s.taken_at.slice(0,10)));
   const min7=daily.slice(-7).reduce((a,d)=>a+(d.tot_s||0),0)/60;
 
-  // serie grafici
-  const idxPts=daily.filter(d=>d.vocal_index!=null).slice(-30).map(d=>({x:fmtD(d.day),y:+(+d.vocal_index).toFixed(1)}));
+  // serie grafici (valori reali analizzati: HNR + MG-ADL)
+  const hnrPts=daily.filter(d=>d.hnr!=null).slice(-30).map(d=>({x:fmtD(d.day),y:+(+d.hnr).toFixed(1)}));
   const adlPts=scales.slice(-30).map(s=>({x:fmtD(s.taken_at),y:s.total}));
-  // coppie stesso giorno per la correlazione
-  const dayIdx={}; daily.forEach(d=>{ if(d.vocal_index!=null) dayIdx[d.day]=+d.vocal_index; });
+  // coppie stesso giorno per la correlazione voce (HNR) ↔ scala clinica
+  const dayVal={}; daily.forEach(d=>{ if(d.hnr!=null) dayVal[d.day]=+d.hnr; });
   const pairs=[]; const seen=new Set();
   scales.forEach(s=>{ const day=s.taken_at.slice(0,10);
-    if(!seen.has(day) && dayIdx[day]!=null){ seen.add(day); pairs.push({day, adl:s.total, idx:dayIdx[day]}); } });
+    if(!seen.has(day) && dayVal[day]!=null){ seen.add(day); pairs.push({day, adl:s.total, val:dayVal[day]}); } });
 
 
   const testRows=tests.slice(0,8).map(t=>{
@@ -479,18 +473,17 @@ function draw(){
         return bs.length? '<span class="badge neutral" title="finestre di riferimento fissate dal paziente">⭐ baseline personale · '+fmtD(bs[0].started_at)+'</span>' : '<span class="badge warn" title="il paziente non ha ancora fissato un riferimento">baseline automatico</span>'; })()+
       '<span class="badge voice">collana: microfono (demo)</span></div></div>'+
       '<div class="tiles" style="margin-top:14px;">'+
-        '<div class="tile"><div class="v" style="color:'+(li&&li.vocal_index>=70?(li.vocal_index>=85?'var(--alert)':'var(--warn)'):'var(--ink)')+';">'+(li?Math.round(li.vocal_index):'—')+'</div><div class="l">indice vocale ultimo giorno'+(delta!=null?' · Δ7g '+(delta>=0?'+':'')+delta.toFixed(1):'')+'</div></div>'+
         '<div class="tile"><div class="v">'+(ls?ls.total+'<span style="font-size:13px;color:var(--inkSoft);">/24</span>':'—')+'</div><div class="l">ultima MG-ADL'+(ls?' · '+fmtD(ls.taken_at):'')+'</div></div>'+
         '<div class="tile"><div class="v">'+last7days.size+'/7</div><div class="l">aderenza check-in · 7 giorni</div></div>'+
         '<div class="tile"><div class="v">'+Math.round(min7)+'\u2032</div><div class="l">voce analizzata · 7 giorni</div></div>'+
       '</div></div>'+
 
-    '<div class="seclabel">Correlazione collana ↔ scala clinica</div>'+
-    '<div class="card" style="border-top:4px solid var(--voice);">'+scatterChart(pairs)+'</div>'+
+    '<div class="seclabel">Correlazione voce (HNR) ↔ scala clinica</div>'+
+    '<div class="card" style="border-top:4px solid var(--voice);">'+scatterChart(pairs,{yLabel:'HNR (dB)'})+'</div>'+
 
     '<div class="seclabel">Serie temporali · 30 giorni</div>'+
     '<div class="charts2">'+
-      '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">Indice vocale <span style="font-weight:400;color:var(--inkSoft);">(50 = baseline)</span></div>'+lineChart(idxPts,{baseline:50,color:C.voice,min:40,max:90})+'</div>'+
+      '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">HNR <span style="font-weight:400;color:var(--inkSoft);">(dB · più alto = meglio)</span></div>'+lineChart(hnrPts,{color:C.voice})+'</div>'+
       '<div class="card"><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">MG-ADL totale</div>'+lineChart(adlPts,{color:C.primary,min:0})+'</div>'+
     '</div>'+
 
@@ -510,7 +503,7 @@ function draw(){
 
     '<div class="seclabel">Segnalazioni</div>'+
     '<div class="card">'+alertHtml+'</div>'+
-    '<div style="font-size:11px;color:var(--inkSoft);margin-top:14px;line-height:1.55;">Indice vocale sperimentale, non diagnostico: composito di shimmer, jitter, HNR, pause e pendenza d\u2019intensità rispetto al baseline personale del paziente. Il baseline può essere <b>automatico</b> (prime finestre registrate) oppure <b>fissato dal paziente</b> in un momento di benessere (⭐): in tal caso l\u2019indice misura lo scostamento dal "proprio meglio". Demo senza autenticazione: non usare con dati reali.</div>'+
+    '<div style="font-size:11px;color:var(--inkSoft);margin-top:14px;line-height:1.55;">La collana invia solo i <b>parametri vocali effettivi</b> (HNR, shimmer, jitter, pause, pendenza d\u2019intensità, F0): nessun indice composito. Il riferimento personale del paziente può essere <b>automatico</b> (prime finestre registrate) oppure <b>fissato dal paziente</b> in un momento di benessere (⭐). Sperimentale, non diagnostico. Demo senza autenticazione: non usare con dati reali.</div>'+
   '</main></div>';
 }
 loadAll();
