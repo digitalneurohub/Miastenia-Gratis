@@ -146,11 +146,15 @@
   .liveoverlay .liverow{display:flex;gap:12px;}
 
   /* ---------- assistente fluttuante (occhio in basso a sinistra) ---------- */
-  .fab{position:fixed;left:max(14px,calc(50% - 268px));bottom:calc(80px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:flex-end;gap:9px;max-width:min(86vw,420px);}
+  .fab{position:fixed;bottom:calc(80px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:flex-end;gap:9px;max-width:min(86vw,420px);}
+  .fab.left{left:max(14px,calc(50% - 268px));flex-direction:row;}
+  .fab.right{right:max(14px,calc(50% - 268px));flex-direction:row-reverse;}
   .fab-eye{width:54px;height:54px;border-radius:999px;background:var(--voice);border:none;flex-shrink:0;display:grid;place-items:center;box-shadow:0 8px 24px rgba(31,110,120,.4);cursor:pointer;padding:0;}
   .fab-eye.live{background:var(--alert);animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;}
   .fab-eye img{width:30px;height:30px;object-fit:contain;display:block;}
-  .fab-bubble{background:var(--card);border-radius:16px 16px 16px 4px;padding:10px 13px;box-shadow:0 6px 20px rgba(27,58,42,.16);font-size:13px;line-height:1.4;color:var(--ink);max-width:300px;cursor:pointer;}
+  .fab-bubble{background:var(--card);padding:10px 13px;box-shadow:0 6px 20px rgba(27,58,42,.16);font-size:13px;line-height:1.4;color:var(--ink);max-width:300px;cursor:pointer;}
+  .fab.left .fab-bubble{border-radius:16px 16px 16px 4px;}
+  .fab.right .fab-bubble{border-radius:16px 16px 4px 16px;text-align:right;}
   .fab-bubble .who{font-size:10px;font-weight:700;color:var(--voice);letter-spacing:.04em;}
   .fab-panel{position:fixed;left:max(14px,calc(50% - 268px));right:max(14px,calc(50% - 268px));bottom:calc(80px + env(safe-area-inset-bottom));z-index:61;background:var(--card);border-radius:20px;box-shadow:0 16px 48px rgba(27,58,42,.28);max-width:520px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;max-height:70dvh;}
   .fab-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--line);}
@@ -223,7 +227,8 @@ function initSupabase(){
 const DEF_SET={first_name:'', last_name:'', name:'', onboarded:false,
   code:'', checkin_time:'07:30', tests_time:'18:00', meds_time:'08:00',
   tests_enabled:{ptosi:true,conta:true,armdrift:true},
-  tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT, voiceMode:'system', voiceAsked:false};
+  tts:(typeof MG_CONFIG==='undefined')||MG_CONFIG.USE_TTS_DEFAULT, voiceMode:'system', voiceAsked:false,
+  fab_side:'right'};
 let SET=loadSettings();
 function loadSettings(){
   try{ const s=JSON.parse(localStorage.getItem('mg_settings')||'null');
@@ -2105,6 +2110,12 @@ function openSettings(){
         '<option value="google"'+(SET.voiceMode==='google'?' selected':'')+'>Voce naturale (cloud) · qualità alta, richiede rete</option>'+
       '</select>'+
       '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">La voce naturale (cloud) usa una voce italiana ad alta qualità; richiede connessione e il testo viene inviato al servizio di sintesi. Senza rete o se non disponibile, si torna automaticamente alla voce di sistema.</div></div>'+
+    '<div class="field" style="margin-top:10px;"><label for="setFabSide">Posizione dell\u2019assistente (occhio)</label>'+
+      '<select id="setFabSide" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink);">'+
+        '<option value="right"'+(SET.fab_side!=='left'?' selected':'')+'>In basso a destra</option>'+
+        '<option value="left"'+(SET.fab_side==='left'?' selected':'')+'>In basso a sinistra</option>'+
+      '</select>'+
+      '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:5px;line-height:1.45;">Da che lato compare l\u2019occhio fluttuante con la mini-chat nelle altre pagine.</div></div>'+
     '<div class="card" style="margin-top:10px;padding:14px;">'+
       '<div style="font-weight:700;font-size:13.5px;">Notifiche push</div>'+
       '<div style="font-size:12px;color:var(--inkSoft);line-height:1.5;margin-top:3px;">Promemoria all\u2019orario scelto anche ad app chiusa. Su iPhone: prima installa l\u2019app in Home (Condividi → Aggiungi a schermata Home).</div>'+
@@ -2129,6 +2140,7 @@ async function saveSettingsUI(){
   SET.tests_enabled={ptosi:v('swPtosi').checked,conta:v('swConta').checked,armdrift:v('swArm').checked};
   SET.tts=v('swTts').checked;
   { const vm=v('setVoiceMode')&&v('setVoiceMode').value; SET.voiceMode=(vm==='google')?'google':'system'; }
+  { const fs=v('setFabSide')&&v('setFabSide').value; SET.fab_side=(fs==='left')?'left':'right'; }
   saveSettings(); closeSettings(); render();
   MGVoice.cancel(); MGVoice.prepare();   // applica subito la scelta voce
   if(SBOK){ await ensurePatient(); refreshData(); toast('Impostazioni salvate e sincronizzate'); }
@@ -2601,7 +2613,8 @@ function renderFab(){
   const eyeImg='<img src="icons/eye-white.png" alt="">';
   if(!fab.open){
     const last=lastBotMsg();
-    root.innerHTML='<div class="fab">'+
+    const side=(SET&&SET.fab_side==='left')?'left':'right';
+    root.innerHTML='<div class="fab '+side+'">'+
       '<button class="fab-eye'+(fab.listening?' live':'')+'" onclick="fabToggle()" aria-label="Apri l\u2019assistente Horus">'+eyeImg+'</button>'+
       (last?'<div class="fab-bubble" onclick="fabToggle()"><div class="who">HORUS</div>'+esc(last.length>120?last.slice(0,118)+'…':last)+'</div>':'')+
     '</div>';
