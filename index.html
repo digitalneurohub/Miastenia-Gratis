@@ -1014,12 +1014,12 @@ function stopHomeVoice(){
   try{ MGVoice.cancel(); }catch(_){}
 }
 function voiceGoto(tipo){     // correzione: passa al test/area citato
-  testVoiceStop();
+  testVoiceStop(); fab.open=false; fabMicStop();
   if(tipo==='mgadl'){ goCheckin(); }
   else { currentTab='test'; openTest(tipo); }
 }
 function voiceBack(){         // "torna indietro" → home
-  testVoiceStop(); stopAllTests();
+  testVoiceStop(); stopAllTests(); fab.open=false; fabMicStop();
   currentTab='horus'; render({top:true});
 }
 function testVoiceStart(tipo){
@@ -2387,6 +2387,7 @@ function buildChatContext(){
 /* esegue l'azione richiesta da Horus portando il paziente nel punto giusto */
 function dispatchHorus(action){
   if(!action||!action.name) return;
+  if(fab.open){ fab.open=false; fabMicStop(); }   // se la chat era estesa, collassala prima di aprire la pagina
   switch(action.name){
     case 'avvia_collana':    currentTab='ascolto'; break;
     case 'registra_baseline':currentTab='ascolto'; break;   // la card del baseline è qui
@@ -2507,6 +2508,10 @@ const fab = { open:false, micOn:false, listening:false, rec:null, live:'', pendi
 function fabVisible(){
   if(currentTab==='horus') return false;                  // sulla home c'è già la chat intera
   if(document.getElementById('onboardRoot') && document.getElementById('onboardRoot').firstChild) return false;
+  // durante un test in corso l'occhio sparisce: la prova è a schermo e verrebbe coperta
+  if(currentTab==='test' && (eyeTest.phase==='running' || sbcTest.phase==='running' || armDrift.phase==='running' || armDrift.phase==='align')) return false;
+  // durante il check-up (che ha la sua chat di domande/risposte) l'occhio sparisce; resta solo sull'intro
+  if(currentTab==='checkin' && (chk.step>=0 || chk.result || chk.sending)) return false;
   return true;
 }
 function micBusyElsewhere(){
@@ -2570,8 +2575,8 @@ function fabHeard(text){
   if(isBackCmd(text)){ chat.msgs.push({role:'user',text:text}); voiceBack(); return; }
   // "avvia" sulla pagina di un test/check-up in attesa
   if(currentTab==='test' && isStartCmd(text)){ const tv=testView;
-    if(['ptosi','conta','armdrift'].includes(tv) && testIsIdle(tv)){ chat.msgs.push({role:'user',text:text}); fabMicStop(); TEST_START_FN[tv](); return; } }
-  if(currentTab==='checkin' && isStartCmd(text) && chk.step<0){ chat.msgs.push({role:'user',text:text}); fabMicStop(); chkBegin(); return; }
+    if(['ptosi','conta','armdrift'].includes(tv) && testIsIdle(tv)){ chat.msgs.push({role:'user',text:text}); fab.open=false; fabMicStop(); TEST_START_FN[tv](); return; } }
+  if(currentTab==='checkin' && isStartCmd(text) && chk.step<0){ chat.msgs.push({role:'user',text:text}); fab.open=false; fabMicStop(); chkBegin(); return; }
   // modifica terapia descritta a voce ("ho cambiato terapia, invece di X prendo Y alle 9")
   const tc=parseTherapyChange(text);
   if(tc){ chat.msgs.push({role:'user',text:text}); proposeTherapyChange(tc); return; }
@@ -2587,55 +2592,63 @@ function fabSendInput(){
 function fabKey(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); fabSendInput(); } }
 
 /* ---- modifica terapia da linguaggio naturale (best-effort lato app) ---- */
+const TH_DAYPART={ mattina:'08:00', mattino:'08:00', colazione:'08:00', pranzo:'13:00', pomeriggio:'16:00', sera:'20:00', cena:'20:00', notte:'22:00' };
+const TH_STOP=new Set(['prendo','prendi','prende','prendere','prenderò','prendero','assumo','assumi','assume','assumere','devo','dovrei','vorrei','voglio','invece','posto','sostituire','sostituisco','sostituisci','aggiungi','aggiungere','aggiungo','nuovo','nuova','farmaco','farmaci','medicina','medicine','pastiglia','pastiglie','compressa','compresse','compresso','pillola','pillole','goccia','gocce','mattina','mattino','sera','cena','pranzo','pomeriggio','notte','colazione','alle','ore','dalle','della','dello','dalla','ogni','giorno','giorni','volte','volta','terapia','cambiato','cambiata','cambiare','cambio','adesso','sempre','ancora','milligrammi','microgrammi','grammi','quando','solo','anche','poi','inoltre','tutti','tutte','mezza','mezzo','prima','dopo','circa','intorno','questo','quello','anche','sono','essere']);
+// dal linguaggio naturale a una o più operazioni sulla terapia (aggiungi/cambia). La conferma fa da rete di sicurezza.
 function parseTherapyChange(text){
-  const s=' '+text.toLowerCase().replace(/[\u2019]/g,"'").replace(/\s+/g,' ')+' ';
-  const wantsAdd=/(aggiung|nuovo farmaco|inizio a prendere|aggiungere)/.test(s);
-  const wantsChange=/(cambiat|invece di|invece che|al posto di|sostitu|adesso prendo|ora prendo|non prendo piu|cambia)/.test(s);
-  if(!wantsAdd && !wantsChange) return null;
-  // orario
-  let time=null; const mt=s.match(/\b(?:alle|ore|h)\s*(\d{1,2})(?:[:.](\d{2}))?/); if(mt){ time=('0'+mt[1]).slice(-2)+':'+(mt[2]||'00'); }
-  // dosi citate (può esserci la vecchia e la nuova)
-  const doses=[...s.matchAll(/(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|ml|cp|compress)/g)].map(m=>m[1].replace(',','.')+' '+(m[2].startsWith('compress')||m[2]==='cp'?'cp':m[2]));
-  // farmaco: prima prova a riconoscere un farmaco già in terapia
-  let target=null, name=null;
-  (STATE.meds||[]).forEach(m=>{ const nm=(m.name||'').toLowerCase(); if(nm && s.includes(' '+nm)){ target=m; name=m.name; } });
-  if(!name){ const nm=s.match(/(?:prendo|prendere|di|che)\s+([a-zàèéìòù][a-zàèéìòù'-]{3,})/); if(nm){ name=nm[1].charAt(0).toUpperCase()+nm[1].slice(1); } }
-  const newDose = doses.length ? doses[doses.length-1] : (target?target.dose:null);
-  if(!name && !newDose && !time) return null;
-  if(wantsAdd || !target){
-    if(!name) return null;
-    return { op:'add', name, dose:newDose, time:time||(target?target.time_of_day:null) };
-  }
-  return { op:'replace', target, name:target.name, dose:newDose||target.dose, time:time||target.time_of_day };
+  const s0=' '+text.toLowerCase().replace(/[\u2019]/g,"'").replace(/\s+/g,' ')+' ';
+  // serve un segnale forte: una dose, una parola "terapia/farmaco/…", o un verbo esplicito di modifica/aggiunta
+  if(!/(\bmg\b|\bmcg\b|\bcp\b|compress|pastigl|pillol|terapia|farmac|medicin|cambiat|\bcambia\b|invece|al posto di|sostitu|aggiung)/.test(s0)) return null;
+  const explicitChange=/(cambiat|\bcambia\b|invece|al posto di|sostitu|non prendo piu|non prendo più)/.test(s0);
+  const clauses=s0.split(/\s+(?:e|ed|,|;|poi|piu|più|inoltre|mentre)\s+/).map(c=>c.trim()).filter(Boolean);
+  const ops=[]; const usedTargets=new Set();
+  clauses.forEach(c=>{
+    const cc=' '+c+' ';
+    if(!explicitChange && !/\d|\bcp\b|compress|pastigl|pillol|prend|assum|aggiung/.test(cc)) return;   // clausola senza segnali utili
+    const dl=[...cc.matchAll(/(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|ml|cp|compresse|compressa|compresso)\b/g)];
+    const dose= dl.length ? (dl[dl.length-1][1].replace(',','.')+' '+(/^cp$|^compress/.test(dl[dl.length-1][2])?'cp':dl[dl.length-1][2])) : null;
+    let time=null; const tm=cc.match(/\b(?:alle|ore|h|entro le)\s*(\d{1,2})(?:[:.](\d{2}))?/); if(tm) time=('0'+tm[1]).slice(-2)+':'+(tm[2]||'00');
+    if(!time){ for(const k in TH_DAYPART){ if(cc.includes(' '+k+' ')||cc.includes(' '+k+',')){ time=TH_DAYPART[k]; break; } } }
+    let target=null, name=null;
+    for(const m of (STATE.meds||[])){ const nm=(m.name||'').toLowerCase(); if(nm && cc.includes(' '+nm)){ target=m; name=m.name; break; } }
+    if(!name){ const words=cc.match(/[a-zàèéìòù'\-]{4,}/gi)||[]; for(const w of words){ if(!TH_STOP.has(w.toLowerCase())){ name=w.charAt(0).toUpperCase()+w.slice(1).toLowerCase(); break; } } }
+    if(!name && !target) return;
+    if(!dose && !time && !explicitChange) return;
+    if(target){ if(usedTargets.has(target.id)) return; usedTargets.add(target.id);
+      ops.push({op:'replace', target, name:target.name, dose:dose||target.dose, time:time||target.time_of_day});
+    } else { ops.push({op:'add', name, dose:dose||null, time:time||'08:00'}); }
+  });
+  return ops.length?ops:null;
 }
-function proposeTherapyChange(tc){
-  fab.pendingMed=tc;
-  let msg;
-  if(tc.op==='add'){ msg='Aggiungo '+tc.name+(tc.dose?' '+tc.dose:'')+(tc.time?' alle '+tc.time.slice(0,5):'')+' alla terapia. Confermi?'; }
-  else { const t=tc.target;
-    msg='Cambio '+t.name+(t.dose?' '+t.dose:'')+(t.time_of_day?' ore '+String(t.time_of_day).slice(0,5):'')+' con '+tc.name+(tc.dose?' '+tc.dose:'')+(tc.time?' ore '+tc.time.slice(0,5):'')+'?'; }
+function proposeTherapyChange(ops){
+  if(!Array.isArray(ops)) ops=[ops];
+  fab.pendingMed=ops;
+  const parts=ops.map(o=> o.op==='add'
+    ? 'aggiungo '+o.name+(o.dose?' '+o.dose:'')+(o.time?' alle '+o.time.slice(0,5):'')
+    : 'cambio '+o.target.name+(o.target.dose?' '+o.target.dose:'')+(o.target.time_of_day?' ore '+String(o.target.time_of_day).slice(0,5):'')+' con '+o.name+(o.dose?' '+o.dose:'')+(o.time?' ore '+o.time.slice(0,5):''));
+  let msg=(ops.length>1?'Aggiorno la terapia: ':'')+parts.join('; ')+'. Confermi?';
+  msg=msg.charAt(0).toUpperCase()+msg.slice(1);
   chat.msgs.push({role:'assistant',text:msg});
   say(msg, ()=>{ if(!IS_IOS && fab.open && fabVisible() && !micBusyElsewhere() && fab.pendingMed) fabMicStart(); });
   render();
 }
-async function applyTherapyChange(tc){
+async function applyTherapyChange(ops){
+  if(!Array.isArray(ops)) ops=[ops];
   if(!SBOK||!PID){ const m='Per modificare la terapia serve il backend collegato.'; chat.msgs.push({role:'assistant',text:m}); say(m); render(); return; }
   try{
-    if(tc.op==='add'){
-      await sb.from('medications').insert({patient_id:PID, name:tc.name, dose:tc.dose||null, time_of_day:tc.time||'08:00', active:true});
-    } else {
-      await sb.from('medications').update({name:tc.name, dose:tc.dose||null, time_of_day:tc.time||tc.target.time_of_day}).eq('id',tc.target.id);
+    for(const o of ops){
+      if(o.op==='add'){ await sb.from('medications').insert({patient_id:PID, name:o.name, dose:o.dose||null, time_of_day:o.time||'08:00', active:true}); }
+      else { await sb.from('medications').update({name:o.name, dose:o.dose||null, time_of_day:o.time||o.target.time_of_day}).eq('id',o.target.id); }
     }
     await refreshData();
-    const m='Fatto ✓ Ho aggiornato la terapia.'; chat.msgs.push({role:'assistant',text:m}); say(m);
-    if(currentTab!=='terapia'){ currentTab='terapia'; }
-    render({top:true});
+    const m=ops.length>1?'Fatto ✓ Ho aggiornato la terapia.':'Fatto ✓ Terapia aggiornata.'; chat.msgs.push({role:'assistant',text:m}); say(m);
+    currentTab='terapia'; fab.open=false; render({top:true});
   }catch(e){ console.warn('therapyChange',e); const m='Non sono riuscito a salvare la modifica.'; chat.msgs.push({role:'assistant',text:m}); say(m); render(); }
 }
 
 function renderFab(){
   const root=document.getElementById('fabRoot'); if(!root) return;
-  if(!fabVisible()){ if(fab.micOn||fab.listening) fabMicStop(); root.innerHTML=''; return; }
+  if(!fabVisible()){ if(fab.micOn||fab.listening) fabMicStop(); root.innerHTML=''; fabPadScreen(); return; }
   const eyeImg='<img src="icons/eye-white.png" alt="">';
   if(!fab.open){
     const last=lastBotMsg();
@@ -2644,6 +2657,7 @@ function renderFab(){
       '<button class="fab-eye'+(fab.listening?' live':'')+'" onclick="fabToggle()" aria-label="Apri l\u2019assistente Horus">'+eyeImg+'</button>'+
       (last?(function(){ const p=String(last).replace(/\*\*|__|`|^#{1,6}\s*|^\s*[-*]\s+/gm,'').replace(/\s+/g,' ').trim(); return '<div class="fab-bubble" onclick="fabToggle()"><div class="who">HORUS</div>'+esc(p.length>120?p.slice(0,118)+'…':p)+'</div>'; })():'')+
     '</div>';
+    fabPadScreen();
     return;
   }
   const msgs=chat.msgs.slice(-6).map(m=>'<div class="fab-msg '+(m.role==='assistant'?'bot':'me')+'">'+(m.role==='assistant'?mdLite(m.text):esc(m.text))+'</div>').join('')
@@ -2667,6 +2681,20 @@ function renderFab(){
     '</div>'+
   '</div>';
   const mm=document.getElementById('fabMsgs'); if(mm) mm.scrollTop=mm.scrollHeight;
+  fabPadScreen();
+}
+/* spinge il contenuto della pagina sopra l'assistente fluttuante, così la bubble
+   o la mini-chat aperta non coprono mai testo o pulsanti in fondo alla schermata */
+function fabPadScreen(){
+  requestAnimationFrame(()=>{
+    const sc=document.getElementById('screen'); if(!sc) return;
+    const root=document.getElementById('fabRoot');
+    const el=root&&root.firstElementChild;
+    if(!el || !fabVisible()){ sc.style.paddingBottom=''; return; }   // home/chat: torna al padding di default
+    const r=el.getBoundingClientRect(), s=sc.getBoundingClientRect();
+    const overlap=Math.round(s.bottom - r.top + 16);                 // quanto l'assistente copre + margine
+    sc.style.paddingBottom = (overlap>24 ? overlap : 24) + 'px';
+  });
 }
 function chatClear(){ const ta=document.getElementById('chatInput'); if(ta){ ta.value=''; autoGrow(ta); ta.focus(); } chat.live=''; chatClearSync(); }
 function chatSubmitFromInput(){
