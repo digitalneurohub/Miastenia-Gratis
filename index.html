@@ -145,6 +145,25 @@
   .liveoverlay .livehint{color:var(--inkSoft);font-weight:500;font-size:18px;}
   .liveoverlay .liverow{display:flex;gap:12px;}
 
+  /* ---------- assistente fluttuante (occhio in basso a sinistra) ---------- */
+  .fab{position:fixed;left:max(14px,calc(50% - 268px));bottom:calc(80px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:flex-end;gap:9px;max-width:min(86vw,420px);}
+  .fab-eye{width:54px;height:54px;border-radius:999px;background:var(--voice);border:none;flex-shrink:0;display:grid;place-items:center;box-shadow:0 8px 24px rgba(31,110,120,.4);cursor:pointer;padding:0;}
+  .fab-eye.live{background:var(--alert);animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;}
+  .fab-eye img{width:30px;height:30px;object-fit:contain;display:block;}
+  .fab-bubble{background:var(--card);border-radius:16px 16px 16px 4px;padding:10px 13px;box-shadow:0 6px 20px rgba(27,58,42,.16);font-size:13px;line-height:1.4;color:var(--ink);max-width:300px;cursor:pointer;}
+  .fab-bubble .who{font-size:10px;font-weight:700;color:var(--voice);letter-spacing:.04em;}
+  .fab-panel{position:fixed;left:max(14px,calc(50% - 268px));right:max(14px,calc(50% - 268px));bottom:calc(80px + env(safe-area-inset-bottom));z-index:61;background:var(--card);border-radius:20px;box-shadow:0 16px 48px rgba(27,58,42,.28);max-width:520px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;max-height:70dvh;}
+  .fab-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--line);}
+  .fab-msgs{padding:12px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;flex:1;}
+  .fab-msg{font-size:13.5px;line-height:1.45;padding:9px 12px;border-radius:14px;max-width:88%;}
+  .fab-msg.bot{background:var(--voiceSoft);color:#123;align-self:flex-start;border-bottom-left-radius:5px;}
+  .fab-msg.me{background:var(--primary);color:#fff;align-self:flex-end;border-bottom-right-radius:5px;}
+  .fab-foot{display:flex;align-items:center;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--line);}
+  .fab-foot textarea{flex:1;resize:none;border:1.5px solid var(--line);border-radius:14px;padding:9px 12px;font-family:inherit;font-size:14px;background:var(--bg);color:var(--ink);max-height:90px;}
+  .fab-mic{width:44px;height:44px;border-radius:999px;border:none;flex-shrink:0;display:grid;place-items:center;color:#fff;background:var(--voice);cursor:pointer;}
+  .fab-mic.on{background:var(--alert);animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;}
+  .fab-icon{width:40px;height:40px;border-radius:999px;border:none;flex-shrink:0;display:grid;place-items:center;background:var(--primary);color:#fff;cursor:pointer;}
+
   /* ---------- impostazioni ---------- */
   .modal{position:fixed;inset:0;background:rgba(27,58,42,.35);display:grid;place-items:end center;z-index:50;}
   .sheet{background:var(--bg);width:100%;max-width:560px;max-height:88dvh;overflow-y:auto;border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));}
@@ -182,6 +201,7 @@
 
 <div id="onboardRoot"></div>
 <div id="settingsRoot"></div>
+<div id="fabRoot"></div>
 <div id="toastRoot"></div>
 
 <script src="config.js"></script>
@@ -485,6 +505,7 @@ async function loadBaseline(){
 
 async function lisStart(opts){
   if(lis.phase==='running') return;
+  fabMicStop();
   const baseMode=!!(opts&&opts.baseline);
   Object.assign(lis,{phase:'running',frames:[],level:0,lastFrameAt:0,winSilent:0,sessWins:[],
     baselineMode:baseMode, baseWin:0, baseVoiced:0});
@@ -666,6 +687,7 @@ const chk={step:-1, answers:[], listening:false, live:'', rec:null,
   sending:false, result:null, error:null, beforeMeds:true};
 
 function chkBegin(){
+  testVoiceStop(); fabMicStop();
   stopAllTests();
   Object.assign(chk,{step:0,answers:CHK_Q.map(()=>''),listening:false,live:'',sending:false,result:null,error:null});
   chk.beforeMeds = SET.meds_time ? nowHM() < SET.meds_time : true;
@@ -901,7 +923,7 @@ function chkClose(){
 let testView='menu';   // 'menu' | 'ptosi' | 'conta' | 'armdrift'
 let pendingExtra=null; // risultato di un test già fatto oggi, in attesa di conferma di salvataggio
 let medsEdit=false;    // editor del piano terapeutico (mostrato solo su "Modifica terapia")
-function openTest(t){ testView=t; render({top:true}); testVoiceStart(t); }
+function openTest(t){ testView=t; render({top:true}); }
 function closeTest(){ testVoiceStop(); stopAllTests(); testView='menu'; render({top:true}); }
 function stopAllTests(){
   testVoiceStop();
@@ -920,14 +942,20 @@ function pauseCollana(){
    toccando il microfono lo si mette in pausa. Resta sempre il
    pulsante per avviare (o scrivere) manualmente.
    ============================================================ */
-const testVoice={ tipo:null, listening:false, rec:null, armed:false, paused:false };
-const TEST_START_FN={ ptosi:()=>eyeStart(), conta:()=>sbcStart(), armdrift:()=>armStart() };
+const testVoice={ tipo:null, stage:null, listening:false, rec:null, armed:false, paused:false };
+const TEST_START_FN={ ptosi:()=>eyeStart(), conta:()=>sbcStart(), armdrift:()=>armStart(), mgadl:()=>chkBegin() };
 function testIsIdle(tipo){
   return tipo==='ptosi'?eyeTest.phase==='idle'
        : tipo==='conta'?sbcTest.phase==='idle'
-       : tipo==='armdrift'?armDrift.phase==='idle' : false;
+       : tipo==='armdrift'?armDrift.phase==='idle'
+       : tipo==='mgadl'?chk.step<0 : false;
+}
+function voiceCtxOk(tipo){   // siamo ancora nel posto giusto per questo flusso vocale?
+  if(tipo==='mgadl') return currentTab==='checkin' && chk.step<0;
+  return currentTab==='test' && testView===tipo;
 }
 function testVoiceInstr(tipo){
+  if(tipo==='mgadl') return 'Check-in MG-ADL: otto domande informali, rispondi a voce. Quando sei pronto di\u2019 avvia per iniziare, oppure tocca il pulsante.';
   const i={
     ptosi:'Test della ptosi. Tieni il telefono all\u2019altezza degli occhi e fissa il punto in alto sullo schermo, senza distogliere lo sguardo. ',
     conta:'Conta in un respiro. Fai un respiro profondo e poi conta ad alta voce a ritmo costante, finch\u00e9 riesci senza riprendere fiato. ',
@@ -935,18 +963,55 @@ function testVoiceInstr(tipo){
   }[tipo]||'';
   return i+'Quando sei pronto di\u2019 avvia per iniziare, oppure tocca il pulsante.';
 }
+function vnorm(t){ return ' '+String(t||'').toLowerCase().replace(/[\u2019\u0027]/g,' ').replace(/[.,!?;:]/g,' ').replace(/\s+/g,' ')+' '; }
 function isStartCmd(t){
-  const s=' '+String(t||'').toLowerCase().replace(/[\u2019\u0027]/g,' ').replace(/[.,!?;:]/g,' ').replace(/\s+/g,' ')+' ';
+  const s=vnorm(t);
   return [' avvia ',' avvio ',' vai ',' inizia ',' iniziamo ',' parti ',' parte ',' comincia ',' cominciamo ',' via ',' start ',' pronto ',' pronta '].some(w=>s.includes(w));
+}
+function isBackCmd(t){
+  const s=vnorm(t);
+  return [' torna indietro ',' indietro ',' annulla ',' annullo ',' esci ',' torna alla home ',' torna a casa ',' alla home ',' chiudi '].some(w=>s.includes(w));
+}
+function voiceTestName(t){   // nome di un test/area citato nella frase (per correggersi)
+  const s=vnorm(t);
+  if(/ ptosi | palpebr/.test(s)) return 'ptosi';
+  if(/ conta | respir| fiato /.test(s)) return 'conta';
+  if(/ braccio | arm | drift /.test(s)) return 'armdrift';
+  if(/ mg ?adl | check ?in | scala | domande /.test(s)) return 'mgadl';
+  return null;
+}
+// ferma la voce/ascolto della home per non sovrapporsi alla voce di un test (richiesta: si sovrappongono)
+function stopHomeVoice(){
+  try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){}
+  chat.routine.listening=false; chat.routine.paused=true;
+  if(chat.listening){ try{ chat.rec && chat.rec.stop(); }catch(_){} chat.listening=false; }
+  try{ MGVoice.cancel(); }catch(_){}
+}
+function voiceGoto(tipo){     // correzione: passa al test/area citato
+  testVoiceStop();
+  if(tipo==='mgadl'){ goCheckin(); }
+  else { currentTab='test'; openTest(tipo); }
+}
+function voiceBack(){         // "torna indietro" → home
+  testVoiceStop(); stopAllTests();
+  currentTab='horus'; render({top:true});
 }
 function testVoiceStart(tipo){
   if(!TEST_START_FN[tipo] || !testIsIdle(tipo)) return;
-  testVoiceStop();
+  testVoiceStop(); stopHomeVoice();
   testVoice.tipo=tipo; testVoice.paused=false; testVoice.armed=sttSupported();
-  // legge le istruzioni, poi (se il test \u00e8 ancora in attesa) si mette in ascolto del comando
+  // per il check-in: prima chiedo i farmaci (per aggiornare le spunte), poi attendo "avvia"
+  testVoice.stage = (tipo==='mgadl' && pendingMorningMeds().length) ? 'meds' : 'await';
+  speakStageThenListen();
+}
+function stagePrompt(){
+  if(testVoice.stage==='meds') return 'Prima di iniziare: hai gi\u00e0 preso i farmaci di stamattina? Cos\u00ec aggiorno le spunte.';
+  return testVoiceInstr(testVoice.tipo);
+}
+function speakStageThenListen(){
   if(typeof MGVoice!=='undefined'){
-    MGVoice.speak(testVoiceInstr(tipo), {cancelFirst:true, onend:()=>{
-      if(currentTab==='test' && testView===tipo && testIsIdle(tipo) && !testVoice.paused) testVoiceListen();
+    MGVoice.speak(stagePrompt(), {cancelFirst:true, onend:()=>{
+      if(voiceCtxOk(testVoice.tipo) && testIsIdle(testVoice.tipo) && !testVoice.paused) testVoiceListen();
     }});
   } else { testVoiceListen(); }
 }
@@ -958,15 +1023,29 @@ function testVoiceListen(){
   const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
   let txt='';
   rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
-  rec.onerror=e=>{ testVoice.listening=false; if(e.error==='not-allowed'||e.error==='service-not-allowed'){ testVoice.armed=false; testVoice.paused=true; } render(); };
+  rec.onerror=e=>{ testVoice.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ testVoice.armed=false; testVoice.paused=true; } render(); };
   rec.onend=()=>{
     testVoice.listening=false; render();
     const heard=txt.trim();
-    if(heard && isStartCmd(heard) && currentTab==='test' && testView===testVoice.tipo && testIsIdle(testVoice.tipo)){
-      const fn=TEST_START_FN[testVoice.tipo]; testVoice.armed=false; if(fn) fn(); return;
+    const tipo=testVoice.tipo;
+    if(!voiceCtxOk(tipo) || !testIsIdle(tipo)) return;
+    if(heard){
+      // correzioni/navigazione (valide in ogni fase): "volevo il test X", "torna indietro"
+      const name=voiceTestName(heard);
+      if(name && name!==tipo){ voiceGoto(name); return; }
+      if(isBackCmd(heard)){ voiceBack(); return; }
+      if(testVoice.stage==='meds'){
+        const yn=routineYesNo(heard);
+        if(yn==='yes'){ markMorningMedsTaken(); chk.beforeMeds=false; toast('Terapia segnata come presa ✓'); }
+        else if(yn==='no'){ chk.beforeMeds=true; }
+        if(yn){ testVoice.stage='await'; if(!testVoice.paused) speakStageThenListen(); return; }
+        // non capito → richiedi (ricade nel riascolto sotto)
+      } else { // stage 'await'
+        if(isStartCmd(heard)){ const fn=TEST_START_FN[tipo]; testVoice.armed=false; if(fn) fn(); return; }
+      }
     }
-    // nessun comando: riascolta finch\u00e9 siamo in attesa e non in pausa (microfono sempre attivo)
-    if(testVoice.armed && !testVoice.paused && currentTab==='test' && testView===testVoice.tipo && testIsIdle(testVoice.tipo)) setTimeout(testVoiceListen,250);
+    // niente comando: riascolta finch\u00e9 in attesa e non in pausa (microfono sempre attivo)
+    if(testVoice.armed && !testVoice.paused) setTimeout(testVoiceListen,250);
   };
   testVoice.rec=rec; testVoice.listening=true; testVoice.armed=true; render();
   try{ rec.start(); }catch(_){ testVoice.listening=false; testVoice.armed=false; render(); }
@@ -986,9 +1065,14 @@ function testVoiceBar(tipo){
   const icon=on
     ? '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg>'
     : '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+  const hint = on
+    ? (testVoice.stage==='meds'
+        ? 'rispondi s\u00ec o no \u00b7 tocca il microfono per la pausa'
+        : 'di\u2019 \u201Cavvia\u201D per iniziare \u00b7 \u201Ctorna indietro\u201D per annullare')
+    : 'microfono in pausa \u00b7 tocca per riattivare il comando vocale';
   return '<div style="display:flex;align-items:center;gap:11px;justify-content:center;margin-top:14px;">'+
     '<button onclick="testVoiceToggle()" aria-label="'+(on?'Pausa microfono':'Riattiva comando vocale')+'" style="all:unset;cursor:pointer;width:46px;height:46px;border-radius:999px;display:grid;place-items:center;color:#fff;flex-shrink:0;background:'+(on?'var(--alert)':'var(--voice)')+';'+(on?'animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;':'')+'">'+icon+'</button>'+
-    '<span style="font-size:12.5px;color:var(--inkSoft);text-align:left;line-height:1.4;">'+(on?'di\u2019 \u201Cavvia\u201D per iniziare \u00b7 tocca il microfono per la pausa':'microfono in pausa \u00b7 tocca per riattivare il comando vocale')+'</span>'+
+    '<span style="font-size:12.5px;color:var(--inkSoft);text-align:left;line-height:1.4;">'+hint+'</span>'+
   '</div>';
 }
 
@@ -1090,7 +1174,7 @@ function analyzeEyeFrame(lm,vw,vh){
   return {ok:true, ear, earR, earL, pfhMm, mrdMm, irisPx, gaze, gazeUp:gaze<0.42, asym:Math.abs(earR-earL)};
 }
 /* ---- overlay live dei landmark dell'occhio (come riconosce il modello) ---- */
-let eyeOverlayOn=true;
+let eyeOverlayOn=false;   // di base i punti sono nascosti; il pulsante li mostra
 const EYE_RING_R=[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
 const EYE_RING_L=[362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
 function toggleEyeOverlay(){
@@ -1098,6 +1182,7 @@ function toggleEyeOverlay(){
   const cv=document.getElementById('eyeOverlay');
   if(cv){ cv.style.display=eyeOverlayOn?'block':'none'; if(!eyeOverlayOn){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); } }
   const b=document.getElementById('eyeOverlayBtn'); if(b) b.textContent=eyeOverlayOn?'Nascondi punti':'Mostra punti';
+  const lg=document.getElementById('eyeOverlayLegend'); if(lg) lg.style.visibility=eyeOverlayOn?'visible':'hidden';
 }
 function drawEyeOverlay(lm,vw,vh){
   const cv=document.getElementById('eyeOverlay');
@@ -1324,7 +1409,7 @@ function sbcFreeHW(){
   sbcTest.analyser=null;
 }
 async function sbcStart(){
-  testVoiceStop();
+  testVoiceStop(); fabMicStop();
   pauseCollana();
   Object.assign(sbcTest,{phase:'running',source:null,samples:[],level:0,started:false,phonation:0,lastSample:0,saved:false,t0:performance.now()});
   render();
@@ -1724,6 +1809,7 @@ function ScreenCheckin(){
       '<div class="switchrow" style="margin-top:0;background:var(--bg);"><div><div style="font-weight:700;font-size:13.5px;">Non ho ancora preso i farmaci</div><div style="font-size:11.5px;color:var(--inkSoft);">serve a interpretare i punteggi</div></div>'+
       '<label class="switch"><input type="checkbox" '+(chk.beforeMeds?'checked':'')+' onchange="chk.beforeMeds=this.checked"><i></i></label></div>'+
       (sttSupported()?'':'<div style="font-size:12px;color:var(--warn);margin-top:10px;line-height:1.5;">⚠ La dettatura non è supportata da questo browser: potrai scrivere le risposte.</div>')+
+      ''+
       '<button class="btn voice full" style="margin-top:14px;" onclick="chkBegin()">Inizia (2 min)</button>'+
     '</div>'+
     '<div style="font-size:11.5px;color:var(--inkSoft);margin-top:10px;line-height:1.5;padding:0 4px;">La trascrizione usa il riconoscimento vocale del browser; il punteggio è calcolato da un modello AI sul server e salvato con le tue parole originali.</div>';
@@ -1784,7 +1870,7 @@ function eyeCard(){
       '<div style="margin-top:10px;"><span class="badge neutral">Fotocamera frontale · Face Landmarker</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Tieni il telefono all\u2019altezza degli occhi e <b>fissa il punto in cima allo schermo</b> per '+eyeTest.duration+' secondi. L\u2019app misura il calo dell\u2019apertura palpebrale (ptosi affaticabile). Al primo avvio scarica ~3 MB di modello.</div>'+
       mediaNote('La fotocamera')+
-      testVoiceBar('ptosi')+
+      ''+
       '<button class="btn primary full" style="margin-top:14px;" onclick="eyeStart()">Avvia test ptosi</button></div>';
   }
   if(eyeTest.phase==='running'){
@@ -1792,11 +1878,11 @@ function eyeCard(){
       ? '<div aria-hidden="true" style="height:140px;margin-top:12px;border-radius:10px;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#EDF3F4,#EDF3F4 10px,#E5EDEF 10px,#E5EDEF 20px);border:1px dashed #9AB3B9;font-size:38px;">👁️</div>'
       : '<div style="position:relative;margin-top:12px;border-radius:10px;overflow:hidden;background:#15262C;">'
           +'<video id="eyeVideo" playsinline muted autoplay style="display:block;width:100%;max-height:190px;object-fit:cover;transform:scaleX(-1);"></video>'
-          +'<canvas id="eyeOverlay" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);pointer-events:none;"></canvas>'
+          +'<canvas id="eyeOverlay" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);pointer-events:none;display:'+(eyeOverlayOn?'block':'none')+';"></canvas>'
         +'</div>'
         +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;">'
-          +'<div style="font-size:11px;color:var(--inkSoft);line-height:1.4;"><span style="color:#39E0A8;">●</span> occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso</div>'
-          +'<button id="eyeOverlayBtn" class="btn small" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">Nascondi punti</button>'
+          +'<div id="eyeOverlayLegend" style="font-size:11px;color:var(--inkSoft);line-height:1.4;'+(eyeOverlayOn?'':'visibility:hidden;')+'"><span style="color:#39E0A8;">●</span> occhio · <span style="color:#7FD7FF;">●</span> iride · <span style="color:#FFD86B;">▬</span> assi EAR — <span style="color:#FF5A47;font-weight:600;">rosso</span> a occhio chiuso</div>'
+          +'<button id="eyeOverlayBtn" class="btn small" style="flex-shrink:0;padding:6px 11px;font-size:12px;" onclick="toggleEyeOverlay()">'+(eyeOverlayOn?'Nascondi punti':'Mostra punti')+'</button>'
         +'</div>';
     return '<div class="card" id="eyeLive" style="margin-top:8px;padding:18px;">'+
       '<div style="text-align:center;margin-bottom:8px;"><span aria-hidden="true" style="display:inline-block;width:16px;height:16px;border-radius:999px;background:var(--primary);animation:mgPulse 1.6s ease-in-out infinite;"></span>'+
@@ -1839,7 +1925,7 @@ function sbcCard(){
       '<div style="margin-top:10px;"><span class="badge voice">Microfono</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Fai un <b>respiro profondo</b> e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. La durata della fonazione stima la riserva respiratoria.</div>'+
       mediaNote('Il microfono')+
-      testVoiceBar('conta')+
+      ''+
       '<button class="btn voice full" style="margin-top:14px;" onclick="sbcStart()">Avvia conta</button></div>';
   }
   if(sbcTest.phase==='running'){
@@ -1871,7 +1957,7 @@ function armCard(){
       '<div style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24"><rect x="2" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="18" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="6" y="11" width="12" height="2" rx="1" fill="#2D7A52"/></svg></div>'+
       '<div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Telefono nella mano, <b>braccio teso in avanti</b> all\u2019orizzontale: mantienilo finché riesci (max '+armDrift.duration+' s). Misuriamo tenuta, caduta progressiva e tremore. Un bip scandisce i secondi.</div>'+
-      testVoiceBar('armdrift')+
+      ''+
       '<button class="btn primary full" style="margin-top:14px;" onclick="armStart()">Avvia arm drift</button></div>';
   }
   if(armDrift.phase==='align'){
@@ -2232,7 +2318,7 @@ function ScreenTerapia(){
    funzioni dell'app eseguendo le "azioni" decise dall'Edge Function.
    ============================================================ */
 const chat={ msgs:[], busy:false, listening:false, rec:null, opened:false, error:null, live:'', discard:false,
-  routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false} };
+  routine:{active:false, done:false, step:0, steps:[], listening:false, rec:null, armed:false, paused:false} };
 
 function horusAvatarSVG(){
   // occhio di Horus (icona caricata, bianca su avatar colorato)
@@ -2271,8 +2357,7 @@ function dispatchHorus(action){
   switch(action.name){
     case 'avvia_collana':    currentTab='ascolto'; break;
     case 'registra_baseline':currentTab='ascolto'; break;   // la card del baseline è qui
-    case 'avvia_checkin':    chk.step=-1; chk.result=null; chk.sending=false;
-                             chk.beforeMeds=buildChatContext().before_meds_hint; currentTab='checkin'; break;
+    case 'avvia_checkin':    currentTab='checkin'; goCheckin(); return;
     case 'avvia_test':       { const t=(action.input&&action.input.tipo)||'ptosi';
                                if(['ptosi','conta','armdrift'].includes(t)){ currentTab='test'; openTest(t); return; }
                                testView='menu'; currentTab='test'; } break;
@@ -2357,8 +2442,13 @@ function chatMic(){
   };
   rec.onend=()=>{ chat.listening=false;
     if(chat.discard){ chat.discard=false; chat.live=''; render(); const t=document.getElementById('chatInput'); if(t){ t.value=''; autoGrow(t);} return; }
+    const ta2=document.getElementById('chatInput');
+    const finalText=(((ta2&&ta2.value)||chat.live||finalTxt)||'').trim();
+    chat.live='';
+    if(ta2){ ta2.value=''; autoGrow(ta2); chatClearSync(); }
     render();
-    const ta2=document.getElementById('chatInput'); if(ta2){ ta2.value=((ta2.value&&ta2.value.trim())||chat.live||finalTxt).trim(); autoGrow(ta2); chatClearSync();} };
+    if(finalText) chatSend(finalText);   // il messaggio parte da solo, senza premere la freccia
+  };
   rec.onerror=e=>{ chat.listening=false; if(e.error!=='no-speech') toast('Dettatura interrotta: '+e.error); render(); };
   chat.rec=rec; chat.listening=true; render();
   try{ rec.start(); }catch(_){ chat.listening=false; render(); }
@@ -2372,6 +2462,173 @@ function chatMicCancel(){
 }
 function autoGrow(ta){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
 function chatClearSync(){ const b=document.getElementById('chatClearBtn'), ta=document.getElementById('chatInput'); if(b&&ta) b.style.display=(ta.value&&ta.value.trim())?'grid':'none'; }
+
+/* ============================================================
+   ASSISTENTE FLUTTUANTE — un solo "occhio" che ti segue in tutta
+   l'app. Mini-chat con l'ultimo messaggio; un unico microfono
+   (niente tracce vocali sovrapposte); naviga, spiega l'andamento,
+   modifica la terapia. Sostituisce i microfoni dei singoli test.
+   ============================================================ */
+const fab = { open:false, micOn:false, listening:false, rec:null, live:'', pendingMed:null };
+
+function fabVisible(){
+  if(currentTab==='horus') return false;                  // sulla home c'è già la chat intera
+  if(document.getElementById('onboardRoot') && document.getElementById('onboardRoot').firstChild) return false;
+  return true;
+}
+function micBusyElsewhere(){
+  return (typeof sbcTest!=='undefined' && sbcTest.phase==='running')   // la conta misura la voce
+      || (typeof lis!=='undefined' && lis.phase==='running')           // la collana registra
+      || (typeof chk!=='undefined' && chk.listening);                  // il check-in detta le risposte
+}
+function lastBotMsg(){ for(let i=chat.msgs.length-1;i>=0;i--){ if(chat.msgs[i].role==='assistant') return chat.msgs[i].text; } return null; }
+function fabToggle(){
+  if(fab.open){ fabClose(); return; }
+  fab.open=true; render();
+  if(sttSupported() && !micBusyElsewhere()) fabMicStart();   // aprendo l'occhio compare il microfono attivo
+}
+function fabClose(){ fab.open=false; fabMicStop(); render(); }
+function fabMicToggle(){ if(fab.micOn){ fabMicStop(); render(); } else { fabMicStart(); } }
+function fabMicStop(){ fab.micOn=false; try{ fab.rec && fab.rec.stop(); }catch(_){ } fab.listening=false; fab.live=''; }
+function fabMicStart(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ toast('Dettatura non supportata qui: scrivi pure'); return; }
+  if(micBusyElsewhere()){ toast('Microfono usato dalla misura in corso'); return; }
+  if(fab.listening) return;
+  fab.micOn=true;
+  fabSilenceOthers();
+  try{ MGVoice.cancel(); }catch(_){}
+  const rec=new SR(); rec.lang='it-IT'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+  let finalTxt='';
+  rec.onresult=e=>{ let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; if(e.results[i].isFinal) finalTxt+=t; else interim+=t; }
+    fab.live=(finalTxt+interim).trim();
+    const el=document.getElementById('fabLive'); if(el) el.textContent=fab.live||'Ti ascolto…';
+  };
+  rec.onerror=e=>{ fab.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ fab.micOn=false; } render(); };
+  rec.onend=()=>{ fab.listening=false; const said=(finalTxt||fab.live||'').trim(); fab.live='';
+    if(said){ fab.micOn=false; render(); fabHeard(said); return; }   // dopo una frase il microfono si spegne (icona coerente)
+    else if(fab.micOn && fabVisible() && !micBusyElsewhere()){ setTimeout(()=>{ if(fab.micOn && !fab.listening && fabVisible() && !micBusyElsewhere()) fabMicStart(); },180); }
+    else render();
+  };
+  fab.rec=rec; fab.listening=true; render();
+  try{ rec.start(); }catch(_){ fab.listening=false; render(); }
+}
+/* il fab ascolta una sola voce: ferma routine/dettatura della home */
+function fabSilenceOthers(){
+  try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; chat.routine.paused=true;
+  if(chat.listening){ try{ chat.rec && chat.rec.stop(); }catch(_){ } chat.listening=false; }
+  try{ testVoiceStop && testVoiceStop(); }catch(_){ }
+}
+/* cosa ho sentito dall'occhio: prima i comandi locali rapidi, poi l'AI */
+function fabHeard(text){
+  // conferma di una modifica terapia proposta
+  if(fab.pendingMed){
+    const yn=routineYesNo(text);
+    if(yn==='yes'){ applyTherapyChange(fab.pendingMed); fab.pendingMed=null; return; }
+    if(yn==='no'){ fab.pendingMed=null; chat.msgs.push({role:'assistant',text:'Va bene, non cambio nulla.'}); say('Va bene, non cambio nulla.'); render(); return; }
+  }
+  // "torna indietro" → home
+  if(isBackCmd(text)){ chat.msgs.push({role:'user',text:text}); voiceBack(); return; }
+  // "avvia" sulla pagina di un test/check-in in attesa
+  if(currentTab==='test' && isStartCmd(text)){ const tv=testView;
+    if(['ptosi','conta','armdrift'].includes(tv) && testIsIdle(tv)){ chat.msgs.push({role:'user',text:text}); fabMicStop(); TEST_START_FN[tv](); return; } }
+  if(currentTab==='checkin' && isStartCmd(text) && chk.step<0){ chat.msgs.push({role:'user',text:text}); fabMicStop(); chkBegin(); return; }
+  // modifica terapia descritta a voce ("ho cambiato terapia, invece di X prendo Y alle 9")
+  const tc=parseTherapyChange(text);
+  if(tc){ chat.msgs.push({role:'user',text:text}); proposeTherapyChange(tc); return; }
+  // tutto il resto → AI (naviga, spiega l'andamento, risponde)
+  chatSend(text);
+}
+/* invio testo dall'input del fab */
+function fabSendInput(){
+  const ta=document.getElementById('fabInput'); if(!ta) return;
+  const t=(ta.value||'').trim(); if(!t) return; ta.value='';
+  fabHeard(t);
+}
+function fabKey(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); fabSendInput(); } }
+
+/* ---- modifica terapia da linguaggio naturale (best-effort lato app) ---- */
+function parseTherapyChange(text){
+  const s=' '+text.toLowerCase().replace(/[\u2019]/g,"'").replace(/\s+/g,' ')+' ';
+  const wantsAdd=/(aggiung|nuovo farmaco|inizio a prendere|aggiungere)/.test(s);
+  const wantsChange=/(cambiat|invece di|invece che|al posto di|sostitu|adesso prendo|ora prendo|non prendo piu|cambia)/.test(s);
+  if(!wantsAdd && !wantsChange) return null;
+  // orario
+  let time=null; const mt=s.match(/\b(?:alle|ore|h)\s*(\d{1,2})(?:[:.](\d{2}))?/); if(mt){ time=('0'+mt[1]).slice(-2)+':'+(mt[2]||'00'); }
+  // dosi citate (può esserci la vecchia e la nuova)
+  const doses=[...s.matchAll(/(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|ml|cp|compress)/g)].map(m=>m[1].replace(',','.')+' '+(m[2].startsWith('compress')||m[2]==='cp'?'cp':m[2]));
+  // farmaco: prima prova a riconoscere un farmaco già in terapia
+  let target=null, name=null;
+  (STATE.meds||[]).forEach(m=>{ const nm=(m.name||'').toLowerCase(); if(nm && s.includes(' '+nm)){ target=m; name=m.name; } });
+  if(!name){ const nm=s.match(/(?:prendo|prendere|di|che)\s+([a-zàèéìòù][a-zàèéìòù'-]{3,})/); if(nm){ name=nm[1].charAt(0).toUpperCase()+nm[1].slice(1); } }
+  const newDose = doses.length ? doses[doses.length-1] : (target?target.dose:null);
+  if(!name && !newDose && !time) return null;
+  if(wantsAdd || !target){
+    if(!name) return null;
+    return { op:'add', name, dose:newDose, time:time||(target?target.time_of_day:null) };
+  }
+  return { op:'replace', target, name:target.name, dose:newDose||target.dose, time:time||target.time_of_day };
+}
+function proposeTherapyChange(tc){
+  fab.pendingMed=tc;
+  let msg;
+  if(tc.op==='add'){ msg='Aggiungo '+tc.name+(tc.dose?' '+tc.dose:'')+(tc.time?' alle '+tc.time.slice(0,5):'')+' alla terapia. Confermi?'; }
+  else { const t=tc.target;
+    msg='Cambio '+t.name+(t.dose?' '+t.dose:'')+(t.time_of_day?' ore '+String(t.time_of_day).slice(0,5):'')+' con '+tc.name+(tc.dose?' '+tc.dose:'')+(tc.time?' ore '+tc.time.slice(0,5):'')+'?'; }
+  chat.msgs.push({role:'assistant',text:msg});
+  say(msg, ()=>{ if(fab.open && fabVisible() && !micBusyElsewhere() && fab.pendingMed) fabMicStart(); });
+  render();
+}
+async function applyTherapyChange(tc){
+  if(!SBOK||!PID){ const m='Per modificare la terapia serve il backend collegato.'; chat.msgs.push({role:'assistant',text:m}); say(m); render(); return; }
+  try{
+    if(tc.op==='add'){
+      await sb.from('medications').insert({patient_id:PID, name:tc.name, dose:tc.dose||null, time_of_day:tc.time||'08:00', active:true});
+    } else {
+      await sb.from('medications').update({name:tc.name, dose:tc.dose||null, time_of_day:tc.time||tc.target.time_of_day}).eq('id',tc.target.id);
+    }
+    await refreshData();
+    const m='Fatto ✓ Ho aggiornato la terapia.'; chat.msgs.push({role:'assistant',text:m}); say(m);
+    if(currentTab!=='terapia'){ currentTab='terapia'; }
+    render({top:true});
+  }catch(e){ console.warn('therapyChange',e); const m='Non sono riuscito a salvare la modifica.'; chat.msgs.push({role:'assistant',text:m}); say(m); render(); }
+}
+
+function renderFab(){
+  const root=document.getElementById('fabRoot'); if(!root) return;
+  if(!fabVisible()){ if(fab.micOn||fab.listening) fabMicStop(); root.innerHTML=''; return; }
+  const eyeImg='<img src="icons/eye-white.png" alt="">';
+  if(!fab.open){
+    const last=lastBotMsg();
+    root.innerHTML='<div class="fab">'+
+      '<button class="fab-eye'+(fab.listening?' live':'')+'" onclick="fabToggle()" aria-label="Apri l\u2019assistente Horus">'+eyeImg+'</button>'+
+      (last?'<div class="fab-bubble" onclick="fabToggle()"><div class="who">HORUS</div>'+esc(last.length>120?last.slice(0,118)+'…':last)+'</div>':'')+
+    '</div>';
+    return;
+  }
+  const msgs=chat.msgs.slice(-6).map(m=>'<div class="fab-msg '+(m.role==='assistant'?'bot':'me')+'">'+esc(m.text)+'</div>').join('')
+    || '<div style="font-size:12.5px;color:var(--inkSoft);">Dimmi pure: posso aprire una pagina, spiegarti l\u2019andamento o aggiornare la terapia.</div>';
+  const micSupported=sttSupported();
+  root.innerHTML='<div class="fab-panel">'+
+    '<div class="fab-head">'+
+      '<span class="fab-icon" style="background:var(--voice);width:34px;height:34px;"><img src="icons/eye-white.png" alt="" style="width:20px;height:20px;object-fit:contain;display:block;"></span>'+
+      '<div style="flex:1;min-width:0;font-weight:700;font-size:14px;">Horus'+(fab.listening?' <span style="font-size:11px;color:var(--alert);font-weight:600;">● in ascolto</span>':'')+'</div>'+
+      '<button class="fab-icon" style="background:var(--bg);color:var(--ink);width:32px;height:32px;" onclick="fabClose()" aria-label="Chiudi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>'+
+    '</div>'+
+    '<div class="fab-msgs" id="fabMsgs">'+msgs+(fab.listening?'<div class="fab-msg bot" id="fabLive" style="opacity:.7;">'+esc(fab.live||'Ti ascolto…')+'</div>':'')+(chat.busy?'<div class="fab-msg bot" style="opacity:.6;">…</div>':'')+'</div>'+
+    '<div class="fab-foot">'+
+      (micSupported?'<button class="fab-mic'+(fab.micOn?' on':'')+'" onclick="fabMicToggle()" aria-label="'+(fab.micOn?'Disattiva microfono':'Attiva microfono')+'" title="'+(fab.micOn?'Disattiva microfono':'Attiva microfono')+'">'+
+        (fab.micOn
+          ? '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg>'
+          : '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>')+
+        '</button>':'')+
+      '<textarea id="fabInput" rows="1" placeholder="Scrivi o parla a Horus…" onkeydown="fabKey(event)" oninput="autoGrow(this)"></textarea>'+
+      '<button class="fab-icon" onclick="fabSendInput()" aria-label="Invia"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 12h13M13 6l6 6-6 6" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'+
+    '</div>'+
+  '</div>';
+  const mm=document.getElementById('fabMsgs'); if(mm) mm.scrollTop=mm.scrollHeight;
+}
 function chatClear(){ const ta=document.getElementById('chatInput'); if(ta){ ta.value=''; autoGrow(ta); ta.focus(); } chat.live=''; chatClearSync(); }
 function chatSubmitFromInput(){
   const ta=document.getElementById('chatInput'); if(!ta) return;
@@ -2455,16 +2712,26 @@ function routineAsk(){
   render({bottom:true});
 }
 function routineStopListen(){ try{ chat.routine.rec && chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; }
+function routinePauseListen(){ chat.routine.paused=true; routineStopListen(); render(); }   // l'utente tocca il microfono per fermare
 function routineListen(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ chat.routine.armed=false; toast('Riconoscimento vocale non disponibile: usa i pulsanti'); render(); return; }
   if(chat.routine.listening) return;
+  chat.routine.paused=false;
   try{ MGVoice.cancel(); }catch(_){}
   const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
   let txt='';
   rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
-  rec.onerror=e=>{ chat.routine.listening=false; if(e.error==='not-allowed'||e.error==='service-not-allowed') chat.routine.armed=false; render(); };
-  rec.onend=()=>{ chat.routine.listening=false; render(); const t=txt.trim(); if(t) routineHeard(t); };
+  rec.onerror=e=>{ chat.routine.listening=false; if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){ chat.routine.armed=false; chat.routine.paused=true; } render(); };
+  rec.onend=()=>{
+    chat.routine.listening=false;
+    const t=txt.trim();
+    if(t){ render(); routineHeard(t); return; }
+    // niente sentito: il microfono resta attivo finché la routine è in corso e non è in pausa
+    if(chat.routine.active && chat.routine.armed && !chat.routine.paused && currentTab==='horus'){
+      setTimeout(()=>{ if(chat.routine.active && !chat.routine.paused && !chat.routine.listening && currentTab==='horus') routineListen(); }, 150);
+    } else render();
+  };
   chat.routine.rec=rec; chat.routine.listening=true; chat.routine.armed=true; render();
   try{ rec.start(); }catch(_){ chat.routine.listening=false; chat.routine.armed=false; render(); }
 }
@@ -2555,8 +2822,12 @@ function ScreenHorus(){
 
   const micEnabled=sttSupported();
   // il microfono della home è "attivo" sia in dettatura libera sia mentre la routine ascolta la risposta
+  const routineActive = !!(chat.routine && chat.routine.active);
   const micListening = chat.listening || !!(chat.routine && chat.routine.listening);
-  const micClick = (chat.routine && chat.routine.listening) ? 'routineStopListen()' : 'chatMic()';
+  // durante la routine il microfono in basso mette in pausa / riprende l'ascolto; altrimenti detta in chat
+  const micClick = routineActive
+    ? (chat.routine.listening ? 'routinePauseListen()' : 'routineListen()')
+    : 'chatMic()';
   return (chat.listening?
     '<div class="liveoverlay">'+
       '<button class="livedot" onclick="chatMic()" aria-label="Pausa" title="Tocca per mettere in pausa" style="border:none;cursor:pointer;"><svg width="40" height="40" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg></button>'+
@@ -2675,6 +2946,9 @@ const TABS=[
 let currentTab='horus';
 function setTab(id){
   if(currentTab==='test' && id!=='test') stopAllTests();
+  // niente sovrapposizioni: uscendo dalla home si ferma la voce/ascolto della home e dei test
+  if(currentTab==='checkin' && id!=='checkin') testVoiceStop();
+  if(currentTab==='horus' && id!=='horus'){ try{ chat.routine.rec&&chat.routine.rec.stop(); }catch(_){ } chat.routine.listening=false; chat.routine.paused=true; if(chat.listening){ try{ chat.rec&&chat.rec.stop(); }catch(_){ } chat.listening=false; } try{ MGVoice.cancel(); }catch(_){ } }
   if(id!=='terapia') medsEdit=false;       // la terapia si riapre in sola lettura
   if(id!=='test') pendingExtra=null;        // annulla una conferma extra in sospeso
   if(currentTab==='ascolto' && id!=='ascolto' && lis.phase==='running'){
@@ -2710,6 +2984,7 @@ function render(opts){
     '<button class="'+(t.id===active?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
     '<span class="ic">'+(t.id==='horus'?horusTabIcon(t.id===active):t.icon)+'</span>'+t.label+'</button>').join('');
   if(chat.opened){ saveHorusSession(); }   // persistenza del thread (per non rifare il saluto a ogni apertura)
+  renderFab();                              // l'occhio fluttuante resta su tutte le pagine
 }
 function envCheck(){
   const probs=[];
