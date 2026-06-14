@@ -44,6 +44,10 @@
   .mono{font-family:var(--mono);}
   @keyframes mgPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.5}}
   @keyframes ringIdle{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.06);opacity:.8}}
+  /* microfono attivo: respira come l'occhio + alone che si allarga verso l'esterno */
+  @keyframes micBreath{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+  @keyframes micHalo{0%{box-shadow:0 6px 18px rgba(179,55,46,.28),0 0 0 0 rgba(179,55,46,.5)}70%{box-shadow:0 6px 18px rgba(179,55,46,.28),0 0 0 16px rgba(179,55,46,0)}100%{box-shadow:0 6px 18px rgba(179,55,46,.28),0 0 0 0 rgba(179,55,46,0)}}
+  .miclive{animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;}
   @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important;}}
 
   .card{background:var(--card);border:none;border-radius:20px;padding:16px;box-shadow:0 4px 16px rgba(27,58,42,.05);}
@@ -103,7 +107,7 @@
   .bubble a{color:inherit;text-decoration:underline;}
   .bubble strong{font-weight:700;}
   .micbtn{width:74px;height:74px;border-radius:999px;border:none;background:var(--voice);color:#fff;display:grid;place-items:center;margin:14px auto 4px;box-shadow:0 8px 22px rgba(31,110,120,.35);}
-  .micbtn.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;}
+  .micbtn.live{background:var(--alert);animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;}
   .dots{display:flex;gap:6px;justify-content:center;margin-top:8px;}
   .dots span{width:8px;height:8px;border-radius:999px;background:var(--line);}
   .dots span.done{background:var(--voice);}
@@ -131,12 +135,12 @@
   .composer .cbtn{border-radius:999px;border:none;display:grid;place-items:center;flex-shrink:0;color:#fff;}
   .composer .cbtn.clear{grid-column:1;justify-self:end;width:46px;height:46px;background:var(--line);color:var(--inkSoft);}   /* ✕ a sinistra, accanto al microfono */
   .composer .cbtn.mic{grid-column:2;justify-self:center;width:64px;height:64px;background:var(--voice);box-shadow:0 8px 22px rgba(31,110,120,.32);}   /* microfono grande, al centro */
-  .composer .cbtn.mic.live{background:var(--alert);animation:mgPulse 1.2s ease-in-out infinite;box-shadow:0 8px 22px rgba(179,55,46,.35);}   /* in registrazione → pausa */
+  .composer .cbtn.mic.live{background:var(--alert);animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;box-shadow:0 6px 18px rgba(179,55,46,.28);}   /* in registrazione → pausa, con alone che si allarga */
   .composer .cbtn.send{grid-column:3;justify-self:start;width:46px;height:46px;background:var(--primary);}   /* freccia di invio a destra, accanto al microfono */
   .composer .cbtn.send:disabled{background:var(--line);}
   .composer .micph{grid-column:2;justify-self:center;width:64px;height:64px;}
   .liveoverlay{position:fixed;inset:0;z-index:120;background:rgba(238,243,238,.98);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;}
-  .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.35);animation:mgPulse 1.3s ease-in-out infinite;}
+  .liveoverlay .livedot{width:92px;height:92px;border-radius:999px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 12px 32px rgba(179,55,46,.30);animation:micBreath 1.6s ease-in-out infinite, micHalo 1.8s ease-out infinite;}
   .liveoverlay .livewords{font-size:27px;line-height:1.32;font-weight:600;color:var(--ink);max-height:42vh;overflow-y:auto;min-height:42px;width:100%;}
   .liveoverlay .livehint{color:var(--inkSoft);font-weight:500;font-size:18px;}
   .liveoverlay .liverow{display:flex;gap:12px;}
@@ -296,7 +300,7 @@ function spark(data,baseline,color,h=44,w=280){
 }
 
 /* dati condivisi tra le schermate (riempiti da refreshData) */
-const STATE={today:{checkin:false,tests:{},meds:{}}, daily:[], scales:[], alerts:[], meds:[], medsLog:[], lastIndex:null, loading:false};
+const STATE={today:{checkin:false,tests:{},meds:{}}, daily:[], scales:[], alerts:[], meds:[], medsLog:[], loading:false};
 async function refreshData(){
   if(!SBOK || !PID){ render(); return; }
   STATE.loading=true;
@@ -316,7 +320,6 @@ async function refreshData(){
     (tr.data||[]).forEach(t=>{ if(t.taken_at.slice(0,10)===t0) STATE.today.tests[t.test_type]=true; });
     STATE.tests=tr.data||[];
     STATE.daily=vd.data||[];
-    STATE.lastIndex=STATE.daily.length?STATE.daily[STATE.daily.length-1].vocal_index:null;
     STATE.alerts=al.data||[];
     STATE.meds=md.data||[];
     STATE.medsLog=mi.data||[];
@@ -478,26 +481,7 @@ async function loadBaseline(){
     return build(data.slice(0, Math.min(30, Math.max(3, Math.floor(data.length/2)))), false);
   }catch(_){ return null; }
 }
-/* indice vocale 0–100: 50 = baseline personale; pesi dichiarati e trasparenti */
-function vocalIndex(m,B){
-  if(!B) return null;
-  const z=(x,st)=> (x-st.m)/st.s;
-  const risk= 0.25*z(m.shimmer,B.shim) + 0.20*z(m.jitter,B.jit)
-            + 0.25*(-z(m.hnr,B.hnr))   + 0.20*z(m.pauseRatio,B.pause)
-            + 0.10*(-z(m.intSlope,B.slope));
-  return Math.round(Math.max(0,Math.min(100, 50+10*risk))*10)/10;
-}
-/* riferimento ricavato dalle finestre della sessione in corso: permette di
-   mostrare un indice fin dalla prima registrazione (demo), finché non esiste
-   un baseline persistito (manuale o automatico). La prima finestra dà ~50. */
-function buildSessBaseline(wins){
-  if(!wins || !wins.length) return null;
-  const stat=arr=>{ const a=arr.filter(v=>v!=null); return {m:vAvg(a), s:Math.max(vSd(a),1e-6)}; };
-  return { n:wins.length, manual:false, session:true,
-    hnr:stat(wins.map(w=>w.hnr)),   shim:stat(wins.map(w=>w.shimmer)),
-    jit:stat(wins.map(w=>w.jitter)), pause:stat(wins.map(w=>w.pauseRatio)),
-    slope:stat(wins.map(w=>w.intSlope)) };
-}
+/* L'indice vocale composito è stato rimosso: si inviano e si mostrano solo i parametri reali. */
 
 async function lisStart(opts){
   if(lis.phase==='running') return;
@@ -569,31 +553,18 @@ async function finalizeWindow(spanS){
     return;
   }
   lis.secToday+=spanS;
-  lis.sessWins.push({hnr:m.hnr, shimmer:m.shimmer, jitter:m.jitter, pauseRatio:m.pauseRatio, intSlope:m.intSlope});
-  const B = lis.baseline || buildSessBaseline(lis.sessWins);   // demo: la sessione fa da riferimento se non c'è baseline
-  const idx=vocalIndex(m,B);
   if(SBOK && PID){
     try{
+      // Verso il database viaggiano solo i parametri effettivi: niente indice composito calcolato.
       await sb.from('voice_windows').insert({patient_id:PID, duration_s:spanS,
         voiced_ratio:+m.voicedRatio.toFixed(3), f0_mean:+m.f0Mean.toFixed(1), f0_sd:+m.f0Sd.toFixed(1),
         hnr_mean:+m.hnr.toFixed(2), jitter_pct:+m.jitter.toFixed(2), shimmer_pct:+m.shimmer.toFixed(2),
         pause_ratio:+m.pauseRatio.toFixed(1), intensity_mean:+m.intMean.toFixed(4),
         intensity_slope:+m.intSlope.toFixed(2), speech_rate:+m.speechRate.toFixed(2),
-        vocal_index:idx, is_baseline:false, source:'mic'});
+        vocal_index:null, is_baseline:false, source:'mic'});
       lis.winSent++;
-      if(idx!=null) maybeVoiceAlert(idx);
     }catch(e){ console.warn('voice_windows',e); }
   } else lis.winSent++;
-}
-async function maybeVoiceAlert(idx){
-  const level=idx>=85?'alert':idx>=70?'warn':null;
-  if(!level) return;
-  const key='mg_alert_voce_'+todayISO()+'_'+level;
-  if(localStorage.getItem(key)) return;
-  localStorage.setItem(key,'1');
-  try{ await sb.from('alerts').insert({patient_id:PID, level, source:'voce', value:idx,
-        message:(level==='alert'?'Indice vocale marcatamente sopra il baseline ('+idx+'/100).':'Indice vocale sopra il baseline ('+idx+'/100): da osservare nei prossimi giorni.')});
-  }catch(_){}
 }
 function freeMic(){
   if(lis.raf){ clearInterval(lis.raf); lis.raf=null; }
@@ -620,10 +591,10 @@ async function baselineStop(completed){
   lis.phase='idle'; lis.baselineMode=false;
   const enough=lis.baseWin>=2 || lis.baseVoiced>=lis.baseTarget*0.6;
   if(SBOK && PID && enough){
-    lis.baseline=await loadBaseline();   // d'ora in poi l'indice è calcolato su questo riferimento
+    lis.baseline=await loadBaseline();   // da ora i parametri vengono confrontati con questo riferimento
     try{
       await sb.from('alerts').insert({patient_id:PID, level:'warn', source:'baseline',
-        message:'Nuovo stato basale fissato dal paziente ("al meglio"): '+lis.baseWin+' finestre, '+Math.round(lis.baseVoiced)+'s di voce. L\u2019indice riparte da questo riferimento.'});
+        message:'Nuovo stato basale fissato dal paziente ("al meglio"): '+lis.baseWin+' finestre, '+Math.round(lis.baseVoiced)+'s di voce. Da ora questo è il riferimento personale.'});
     }catch(_){}
     localStorage.setItem('mg_baseline_set', todayISO());
     toast('Stato basale registrato ✓');
@@ -930,9 +901,10 @@ function chkClose(){
 let testView='menu';   // 'menu' | 'ptosi' | 'conta' | 'armdrift'
 let pendingExtra=null; // risultato di un test già fatto oggi, in attesa di conferma di salvataggio
 let medsEdit=false;    // editor del piano terapeutico (mostrato solo su "Modifica terapia")
-function openTest(t){ testView=t; render({top:true}); }
-function closeTest(){ stopAllTests(); testView='menu'; render({top:true}); }
+function openTest(t){ testView=t; render({top:true}); testVoiceStart(t); }
+function closeTest(){ testVoiceStop(); stopAllTests(); testView='menu'; render({top:true}); }
 function stopAllTests(){
+  testVoiceStop();
   if(eyeTest.phase==='running') eyeStop(true);
   if(sbcTest.phase==='running') sbcStop(true);
   if(armDrift.phase==='running'||armDrift.phase==='align') armStop(true);
@@ -940,6 +912,86 @@ function stopAllTests(){
 function pauseCollana(){
   if(lis.phase==='running'){ lisStop(); toast('Collana in pausa: il microfono serve al test'); }
 }
+/* ============================================================
+   VOCE DEI TEST — istruzioni parlate + comando vocale "avvia"
+   Aprendo la pagina di un test, Horus legge le istruzioni e poi
+   resta in ascolto del comando "avvia" (o sinonimi) per farlo
+   partire. Il microfono resta attivo finché il test è in attesa;
+   toccando il microfono lo si mette in pausa. Resta sempre il
+   pulsante per avviare (o scrivere) manualmente.
+   ============================================================ */
+const testVoice={ tipo:null, listening:false, rec:null, armed:false, paused:false };
+const TEST_START_FN={ ptosi:()=>eyeStart(), conta:()=>sbcStart(), armdrift:()=>armStart() };
+function testIsIdle(tipo){
+  return tipo==='ptosi'?eyeTest.phase==='idle'
+       : tipo==='conta'?sbcTest.phase==='idle'
+       : tipo==='armdrift'?armDrift.phase==='idle' : false;
+}
+function testVoiceInstr(tipo){
+  const i={
+    ptosi:'Test della ptosi. Tieni il telefono all\u2019altezza degli occhi e fissa il punto in alto sullo schermo, senza distogliere lo sguardo. ',
+    conta:'Conta in un respiro. Fai un respiro profondo e poi conta ad alta voce a ritmo costante, finch\u00e9 riesci senza riprendere fiato. ',
+    armdrift:'Arm drift. Tieni il telefono nel palmo della mano con il braccio teso in avanti, all\u2019orizzontale, e mantienilo finch\u00e9 riesci. '
+  }[tipo]||'';
+  return i+'Quando sei pronto di\u2019 avvia per iniziare, oppure tocca il pulsante.';
+}
+function isStartCmd(t){
+  const s=' '+String(t||'').toLowerCase().replace(/[\u2019\u0027]/g,' ').replace(/[.,!?;:]/g,' ').replace(/\s+/g,' ')+' ';
+  return [' avvia ',' avvio ',' vai ',' inizia ',' iniziamo ',' parti ',' parte ',' comincia ',' cominciamo ',' via ',' start ',' pronto ',' pronta '].some(w=>s.includes(w));
+}
+function testVoiceStart(tipo){
+  if(!TEST_START_FN[tipo] || !testIsIdle(tipo)) return;
+  testVoiceStop();
+  testVoice.tipo=tipo; testVoice.paused=false; testVoice.armed=sttSupported();
+  // legge le istruzioni, poi (se il test \u00e8 ancora in attesa) si mette in ascolto del comando
+  if(typeof MGVoice!=='undefined'){
+    MGVoice.speak(testVoiceInstr(tipo), {cancelFirst:true, onend:()=>{
+      if(currentTab==='test' && testView===tipo && testIsIdle(tipo) && !testVoice.paused) testVoiceListen();
+    }});
+  } else { testVoiceListen(); }
+}
+function testVoiceListen(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ testVoice.armed=false; return; }            // niente STT: resta solo il pulsante
+  if(testVoice.listening) return;
+  try{ MGVoice.cancel(); }catch(_){}
+  const rec=new SR(); rec.lang='it-IT'; rec.interimResults=false; rec.continuous=false; rec.maxAlternatives=1;
+  let txt='';
+  rec.onresult=e=>{ for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) txt+=e.results[i][0].transcript; } };
+  rec.onerror=e=>{ testVoice.listening=false; if(e.error==='not-allowed'||e.error==='service-not-allowed'){ testVoice.armed=false; testVoice.paused=true; } render(); };
+  rec.onend=()=>{
+    testVoice.listening=false; render();
+    const heard=txt.trim();
+    if(heard && isStartCmd(heard) && currentTab==='test' && testView===testVoice.tipo && testIsIdle(testVoice.tipo)){
+      const fn=TEST_START_FN[testVoice.tipo]; testVoice.armed=false; if(fn) fn(); return;
+    }
+    // nessun comando: riascolta finch\u00e9 siamo in attesa e non in pausa (microfono sempre attivo)
+    if(testVoice.armed && !testVoice.paused && currentTab==='test' && testView===testVoice.tipo && testIsIdle(testVoice.tipo)) setTimeout(testVoiceListen,250);
+  };
+  testVoice.rec=rec; testVoice.listening=true; testVoice.armed=true; render();
+  try{ rec.start(); }catch(_){ testVoice.listening=false; testVoice.armed=false; render(); }
+}
+function testVoiceStop(){
+  testVoice.armed=false;
+  try{ testVoice.rec && testVoice.rec.stop(); }catch(_){ }
+  testVoice.listening=false;
+}
+function testVoiceToggle(){
+  if(testVoice.listening || (testVoice.armed && !testVoice.paused)){ testVoice.paused=true; testVoiceStop(); render(); }
+  else { testVoice.paused=false; testVoiceListen(); }
+}
+function testVoiceBar(tipo){
+  if(!sttSupported()) return '';
+  const on = testVoice.tipo===tipo && (testVoice.listening || testVoice.armed) && !testVoice.paused;
+  const icon=on
+    ? '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg>'
+    : '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+  return '<div style="display:flex;align-items:center;gap:11px;justify-content:center;margin-top:14px;">'+
+    '<button onclick="testVoiceToggle()" aria-label="'+(on?'Pausa microfono':'Riattiva comando vocale')+'" style="all:unset;cursor:pointer;width:46px;height:46px;border-radius:999px;display:grid;place-items:center;color:#fff;flex-shrink:0;background:'+(on?'var(--alert)':'var(--voice)')+';'+(on?'animation:micBreath 1.5s ease-in-out infinite, micHalo 1.6s ease-out infinite;':'')+'">'+icon+'</button>'+
+    '<span style="font-size:12.5px;color:var(--inkSoft);text-align:left;line-height:1.4;">'+(on?'di\u2019 \u201Cavvia\u201D per iniziare \u00b7 tocca il microfono per la pausa':'microfono in pausa \u00b7 tocca per riattivare il comando vocale')+'</span>'+
+  '</div>';
+}
+
 async function saveTestResult(type, metrics, tone, alertTxt){
   if(!SBOK || !PID) return false;
   // se il test di oggi è già stato registrato, questo è un "extra": chiedi conferma
@@ -1088,7 +1140,14 @@ function computeEyeBiomarkers(){
 }
 function eyeInterpretBio(m){
   if(!m.ok) return {tone:'warn', txt:'Volto non rilevato a sufficienza: avvicina il viso, illumina la stanza e tieni il telefono fermo all\u2019altezza degli occhi, poi ripeti.'};
-  if(m.upFrac<0.4) return {tone:'warn', txt:'Sguardo non mantenuto verso l\u2019alto per gran parte del test: ripeti fissando il punto in cima allo schermo, così la manovra provoca davvero la ptosi affaticabile.'};
+  if(m.upFrac<0.4){
+    // Disambiguazione esecuzione vs ptosi reale: se lo sguardo non risulta in alto MA l'apertura
+    // cala comunque in modo netto, può essere una ptosi marcata (la palpebra che scende abbassa
+    // anche lo sguardo apparente), non solo una manovra eseguita male.
+    const declStrong=(m.declPFH>=25)||(m.declEAR>=25)||(m.endPFH>0 && m.endPFH<4.5);
+    if(declStrong) return {tone:'warn', txt:'Sguardo in alto non confermato, ma l\u2019apertura palpebrale cala comunque in modo netto: possibile ptosi marcata. Ripeti fissando bene il punto in cima allo schermo per confermare; se proprio non riesci a tenere lo sguardo su, segnalalo al centro di riferimento.'};
+    return {tone:'warn', txt:'Sguardo non mantenuto verso l\u2019alto per gran parte del test: ripeti fissando il punto in cima allo schermo, così la manovra provoca davvero la ptosi affaticabile.'};
+  }
   const flags=[];
   if(m.declPFH>=20 || m.declEAR>=20) flags.push('apertura in calo durante lo sguardo in alto');
   if(m.endPFH>0 && m.endPFH<6) flags.push('rima palpebrale ridotta a fine test');
@@ -1168,6 +1227,7 @@ function scrollScreenToCard(id){
   });
 }
 async function eyeStart(){
+  testVoiceStop();
   Object.assign(eyeTest,{phase:'running',source:null,frames:[],gotFrames:0,saved:false,
     t0:performance.now(),lastVideoTime:-1,modelReady:false,status:'caricamento modello…'});
   render({top:true});   // box bianco in cima sotto la top bar (titolo/Salva-Scarta nascosti durante il test)
@@ -1207,7 +1267,7 @@ function eyeStop(abort){
   }
   render();
 }
-function eyeReset(){ eyeTest.phase='idle'; eyeTest.frames=[]; eyeTest.saved=false; render(); }
+function eyeReset(){ pendingExtra=null; eyeTest.phase='idle'; eyeTest.frames=[]; eyeTest.saved=false; render(); }
 
 /* ---------------- CONTA — single-breath count (microfono) ---------------- */
 const sbcTest={phase:'idle',source:null,maxDur:35,stream:null,actx:null,analyser:null,buf:null,
@@ -1219,7 +1279,7 @@ function sbcPush(l){
 }
 function sbcCore(){
   const now=performance.now(), elapsed=(now-sbcTest.t0)/1000;
-  if(sbcTest.level>6){
+  if(sbcTest.level>3){   // soglia di volume più bassa: rileva anche una voce debole
     if(!sbcTest.started){ sbcTest.started=true; sbcTest.startT=now; }
     sbcTest.lastVoice=now;
   }
@@ -1264,6 +1324,7 @@ function sbcFreeHW(){
   sbcTest.analyser=null;
 }
 async function sbcStart(){
+  testVoiceStop();
   pauseCollana();
   Object.assign(sbcTest,{phase:'running',source:null,samples:[],level:0,started:false,phonation:0,lastSample:0,saved:false,t0:performance.now()});
   render();
@@ -1303,7 +1364,7 @@ function sbcStop(abort){
   }
   render();
 }
-function sbcReset(){ sbcTest.phase='idle'; sbcTest.samples=[]; sbcTest.saved=false; render(); }
+function sbcReset(){ pendingExtra=null; sbcTest.phase='idle'; sbcTest.samples=[]; sbcTest.saved=false; render(); }
 
 /* ---------------- ARM DRIFT — accelerometro / giroscopio ---------------- */
 const armDrift={phase:'idle',
@@ -1417,6 +1478,7 @@ function updateArmLive(elapsed, driftNow){
   if(sl && armDrift.samples.length>1) sl.innerHTML=spark(armDrift.samples, 0, C.alert, 50, 300);
 }
 async function armStart(){
+  testVoiceStop();
   let granted=true;
   try{
     if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
@@ -1552,82 +1614,15 @@ function armStop(abort){
   }
   render();
 }
-function armReset(){ Object.assign(armDrift,{phase:'idle',samples:[],maxDrift:0,holdTime:0,tremor:0,saved:false}); render(); }
+function armReset(){ pendingExtra=null; Object.assign(armDrift,{phase:'idle',samples:[],maxDrift:0,holdTime:0,tremor:0,saved:false}); render(); }
 
 /* ============================================================
    SCHERMATE
    ============================================================ */
-function gauge(val){
-  if(val==null) return '<div class="mono" style="font-size:26px;font-weight:600;color:var(--inkSoft);">—</div>';
-  const tone=val>=85?'var(--alert)':val>=70?'var(--warn)':'var(--ok)';
-  const dash=Math.round(val/100*213);
-  return '<svg width="86" height="86" viewBox="0 0 84 84" aria-hidden="true">'+
-    '<circle cx="42" cy="42" r="34" fill="none" stroke="#E3EDE5" stroke-width="9"/>'+
-    '<circle cx="42" cy="42" r="34" fill="none" stroke="'+tone+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+dash+' 214" transform="rotate(-90 42 42)"/>'+
-    '<text x="42" y="40" text-anchor="middle" font-size="18" font-weight="700" fill="#1B3A2A" font-family="Albert Sans,sans-serif">'+Math.round(val)+'</text>'+
-    '<text x="42" y="55" text-anchor="middle" font-size="9" fill="#61756A" font-family="Albert Sans,sans-serif">indice</text></svg>';
-}
-function todoRow(done,label,sub,onclick){
-  const mark=done
-    ? '<span style="width:26px;height:26px;border-radius:999px;background:var(--ok);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0;">✓</span>'
-    : '<span style="width:26px;height:26px;border-radius:999px;border:2.5px solid var(--line);flex-shrink:0;"></span>';
-  return '<button onclick="'+onclick+'" style="all:unset;cursor:pointer;display:flex;gap:11px;align-items:center;background:var(--card);border-radius:16px;padding:13px 15px;margin-top:8px;width:100%;box-sizing:border-box;'+(done?'opacity:.66;':'')+'">'+
-    mark+'<span style="min-width:0;"><span style="display:block;font-size:14px;font-weight:700;">'+label+'</span>'+
-    '<span style="display:block;font-size:12px;color:var(--inkSoft);margin-top:1px;">'+sub+'</span></span></button>';
-}
-
-function ScreenHome(){
-  const name=SET.name?', '+esc(SET.name.split(' ')[0]):'';
-  const dateStr=new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
-  const en=SET.tests_enabled;
-  const anyTest=en.ptosi||en.conta||en.armdrift;
-  let testsRows='';
-  if(en.ptosi)    testsRows+=todoRow(!!STATE.today.tests.ptosi,   'Test ptosi','sguardo in alto 60 s · ore '+SET.tests_time,"setTab('test');openTest('ptosi')");
-  if(en.conta)    testsRows+=todoRow(!!STATE.today.tests.conta,   'Conta in un respiro','riserva respiratoria · ore '+SET.tests_time,"setTab('test');openTest('conta')");
-  if(en.armdrift) testsRows+=todoRow(!!STATE.today.tests.armdrift,'Arm drift','tenuta del braccio 30 s · ore '+SET.tests_time,"setTab('test');openTest('armdrift')");
-  const idx=STATE.lastIndex;
-  const idxSpark=STATE.daily.length>=1?spark(STATE.daily.slice(-7).map(d=>d.vocal_index??50),50,C.voice,40,260):'';
-  const alertsHtml=STATE.alerts.length? STATE.alerts.slice(0,3).map(a=>
-      '<div style="display:flex;gap:9px;align-items:flex-start;margin-top:8px;">'+
-      '<span class="badge '+a.level+'" style="flex-shrink:0;">'+(a.level==='alert'?'alert':'attenzione')+'</span>'+
-      '<span style="font-size:12.5px;line-height:1.45;color:var(--inkSoft);">'+esc(a.message)+' <span class="mono" style="font-size:10.5px;">'+fmtDate(a.created_at)+'</span></span></div>').join('')
-    : '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:6px;">nessuna segnalazione recente</div>';
-  const cfgWarn=(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)?'':'<div class="card" style="margin-top:12px;background:var(--warnSoft);box-shadow:none;font-size:12.5px;color:var(--warn);line-height:1.55;"><b>Backend non configurato.</b> Le misure restano solo su questo telefono: compila <span class="mono">config.js</span> seguendo SETUP.md per attivare salvataggio, check-in e notifiche.</div>';
-  return ''+
-  '<div style="margin-top:6px;"><h1 style="font-size:25px;font-weight:700;letter-spacing:-0.01em;">Buongiorno'+name+'</h1>'+
-  '<div style="font-size:13.5px;color:var(--inkSoft);margin-top:2px;">'+dateStr+'</div></div>'+
-  cfgWarn+
-
-  '<div class="card" style="margin-top:14px;padding:18px;border-top:4px solid var(--voice);">'+
-    '<div class="row-flex"><div style="font-weight:700;font-size:15.5px;">Collana Horus</div>'+
-    '<span class="badge voice">'+(lis.phase==='running'?'● in ascolto':'pronta')+'</span></div>'+
-    '<div style="font-size:13px;color:var(--inkSoft);line-height:1.55;margin-top:6px;">In questa demo <b>il microfono del telefono fa da collana</b>: durante le conversazioni estrae i parametri della voce e li confronta con il tuo baseline. L\u2019audio resta sul telefono.</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">'+
-      '<div class="tile"><div class="v">'+lis.winSent+'</div><div class="l">finestre inviate (sessione)</div></div>'+
-      '<div class="tile"><div class="v">'+(STATE.daily.length?Math.round(STATE.daily[STATE.daily.length-1].tot_s/60)+' min':'—')+'</div><div class="l">voce · ultimo giorno</div></div>'+
-    '</div>'+
-    '<button class="btn voice full" style="margin-top:14px;" onclick="setTab(\u0027ascolto\u0027)">'+(lis.phase==='running'?'Vai all\u2019ascolto':'Indossa la collana')+'</button>'+
-  '</div>'+
-
-  '<div class="seclabel">Da fare oggi</div>'+
-  todoRow(STATE.today.checkin,'Check-in vocale MG-ADL','2 minuti a voce · ore '+SET.checkin_time+(chk.beforeMeds!==false?' · prima dei farmaci':''),"setTab('checkin')")+
-  (anyTest? testsRows : '<div style="font-size:12.5px;color:var(--inkSoft);margin-top:8px;padding:0 4px;">Nessun test attivo. Puoi attivare ptosi, conta e arm drift dalle <button class="btn small" style="padding:3px 10px;" onclick="openSettings()">impostazioni</button></div>')+
-
-  '<div class="seclabel">Indice vocale</div>'+
-  '<div class="card" style="display:flex;gap:14px;align-items:center;">'+gauge(idx)+
-    '<div style="flex:1;min-width:0;">'+(idx!=null?idxSpark:'<div style="font-size:12.5px;color:var(--inkSoft);line-height:1.5;">L\u2019indice compare dopo le prime ~10 finestre di voce: servono per costruire il tuo baseline personale.</div>')+
-    '<div style="font-size:11px;color:var(--inkSoft);margin-top:4px;">ultimi 7 giorni · 50 = baseline · <b>sperimentale, non diagnostico</b></div></div>'+
-  '</div>'+
-
-  '<div class="seclabel">Segnalazioni</div>'+
-  '<div class="card">'+alertsHtml+'</div>'+
-  '<div style="height:8px;"></div>'+
-  '<div class="card" style="background:var(--primarySoft);box-shadow:none;padding:12px 16px;"><div style="font-size:12.5px;color:#1B4D33;line-height:1.5;">I sintomi della miastenia fluttuano nella giornata: il check-in del mattino (prima dei farmaci) e l\u2019ascolto continuo aiutano a coglierne l\u2019andamento reale.</div></div>';
-}
 
 function baselineInfoLine(){
   const b=lis.baseline;
-  if(!b) return 'ancora nessun baseline salvato: l\u2019indice usa come riferimento la registrazione in corso (parte da ~50)';
+  if(!b) return 'ancora nessun stato basale salvato: registra il tuo \u201cmeglio\u201d per dare al medico un riferimento';
   return b.manual
     ? 'riferimento fissato da te · '+b.n+' finestre'
     : 'baseline automatico · prime '+b.n+' finestre';
@@ -1645,9 +1640,9 @@ function ScreenAscolto(){
   // --- sessione "stato basale" in corso ---
   if(baseMode){
     return '<h2 style="font-size:21px;margin-top:10px;">Sto registrando il tuo meglio</h2>'+
-    '<div style="font-size:13px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Parla con la tua voce normale per circa un minuto e mezzo. Useremo questa voce come <b>riferimento personale</b>: l\u2019indice dei prossimi giorni verrà confrontato con questo momento.</div>'+
+    '<div style="font-size:13px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Parla con la tua voce normale per circa un minuto e mezzo. Useremo questa voce come <b>riferimento personale</b>: i parametri dei prossimi giorni verranno confrontati con questo momento.</div>'+
     '<div class="card" id="baseLive" style="margin-top:14px;text-align:center;padding:20px 18px;border-top:4px solid var(--voice);">'+pendant()+
-      '<div id="baseHint" style="font-size:12.5px;color:var(--inkSoft);min-height:18px;">parla con la tua voce normale: leggi qualcosa o racconta la giornata</div>'+
+      '<div id="baseHint" style="font-size:12.5px;color:var(--inkSoft);line-height:1.4;height:40px;display:flex;align-items:center;justify-content:center;text-align:center;">parla con la tua voce normale: leggi qualcosa o racconta la giornata</div>'+
       '<div style="height:8px;background:var(--line);border-radius:999px;margin-top:14px;overflow:hidden;"><div id="baseBar" style="width:0%;height:100%;background:var(--voice);border-radius:999px;transition:width .3s;"></div></div>'+
       '<div class="mono" id="baseSec" style="font-size:12px;color:var(--inkSoft);margin-top:6px;">0s / '+lis.baseTarget+'s di voce</div>'+
       '<div style="font-size:12px;color:#14474E;background:var(--voiceSoft);border-radius:12px;padding:9px 12px;margin-top:14px;line-height:1.5;">Suggerimento: fissa il baseline quando ti senti al meglio (ad esempio dopo i farmaci), in un ambiente silenzioso.</div>'+
@@ -1672,8 +1667,7 @@ function ScreenAscolto(){
         '<div class="tile"><div class="v" id="lvMin">'+(lis.secToday/60).toFixed(1)+' min</div><div class="l">voce analizzata</div></div>'+
       '</div>'+
       '<button class="btn full" style="margin-top:16px;" onclick="lisStop()">Termina ascolto</button>'+
-    '</div>'+
-    '<div style="font-size:12px;color:var(--inkSoft);margin-top:10px;text-align:center;">🔒 l\u2019audio resta sul telefono · solo parametri numerici verso il database</div>';
+    '</div>';
   }
 
   // --- idle ---
@@ -1693,7 +1687,7 @@ function ScreenAscolto(){
     '<button class="btn full" style="margin-top:12px;" onclick="baselineStart()">'+(hasManual?'Aggiorna lo stato basale':'Registra lo stato basale')+'</button>'+
   '</div>'+
 
-  '<div class="card" style="margin-top:12px;background:var(--voiceSoft);box-shadow:none;padding:13px 16px;"><div style="font-size:12.5px;color:#14474E;line-height:1.55;">🔒 <b>Privacy:</b> l\u2019audio non lascia mai il dispositivo e non viene registrato. Verso il database viaggiano solo numeri: F0, HNR, jitter, shimmer, pause, intensità.</div></div>'+
+  '<div class="card" style="margin-top:12px;background:var(--voiceSoft);box-shadow:none;padding:13px 16px;"><div style="font-size:12.5px;color:#14474E;line-height:1.55;">🔒 <b>Privacy:</b> l\u2019audio non lascia mai il dispositivo e non viene registrato. Verso il database viaggiano solo i parametri.</div></div>'+
   '<div class="card" style="margin-top:10px;box-shadow:none;background:transparent;padding:4px 6px;"><div style="font-size:12px;color:var(--inkSoft);line-height:1.55;">Nella collana vera un <b>sensore di vibrazione</b> a contatto con la pelle riconosce quando sei <b>tu</b> a parlare (anche se la voce è affaticata) e analizza solo la tua voce, ignorando chi ti sta intorno; l\u2019ascolto è continuo e a schermo spento. In questa demo sul telefono non c\u2019è quel sensore: il microfono analizza ciò che sente, quindi usala in un ambiente tranquillo e tieni l\u2019app aperta (lo schermo resta acceso).</div></div>';
 }
 
@@ -1790,6 +1784,7 @@ function eyeCard(){
       '<div style="margin-top:10px;"><span class="badge neutral">Fotocamera frontale · Face Landmarker</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Tieni il telefono all\u2019altezza degli occhi e <b>fissa il punto in cima allo schermo</b> per '+eyeTest.duration+' secondi. L\u2019app misura il calo dell\u2019apertura palpebrale (ptosi affaticabile). Al primo avvio scarica ~3 MB di modello.</div>'+
       mediaNote('La fotocamera')+
+      testVoiceBar('ptosi')+
       '<button class="btn primary full" style="margin-top:14px;" onclick="eyeStart()">Avvia test ptosi</button></div>';
   }
   if(eyeTest.phase==='running'){
@@ -1819,6 +1814,7 @@ function eyeCard(){
   if(!m.ok){
     return '<div class="card" style="margin-top:14px;padding:18px;"><div class="row-flex"><div style="font-weight:700;">Risultato — ptosi</div><span class="badge warn">Dato insufficiente</span></div>'+
     '<div class="card" style="margin-top:12px;padding:12px;background:var(--warnSoft);box-shadow:none;font-size:13px;color:var(--warn);line-height:1.5;">'+r.txt+'</div>'+
+    extraBanner('ptosi')+
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="eyeReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
   }
   const tl=(v,l,c)=>'<div class="tile"><div class="v" style="'+(c?'color:'+c+';':'')+'">'+v+'</div><div class="l">'+l+'</div></div>';
@@ -1833,6 +1829,7 @@ function eyeCard(){
     '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
     '<div style="margin-top:10px;">'+savedBadge(eyeTest)+'</div>'+
     '<div style="font-size:11px;color:var(--inkSoft);margin-top:8px;line-height:1.5;">Elaborazione on-device: nessuna immagine lascia il telefono. mm calibrati sul diametro dell\u2019iride (≈ 11,7 mm).</div>'+
+    extraBanner('ptosi')+
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="eyeReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
 }
 function sbcCard(){
@@ -1842,6 +1839,7 @@ function sbcCard(){
       '<div style="margin-top:10px;"><span class="badge voice">Microfono</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Fai un <b>respiro profondo</b> e conta ad alta voce a ritmo costante (uno, due, tre…) finché riesci, senza riprendere fiato. La durata della fonazione stima la riserva respiratoria.</div>'+
       mediaNote('Il microfono')+
+      testVoiceBar('conta')+
       '<button class="btn voice full" style="margin-top:14px;" onclick="sbcStart()">Avvia conta</button></div>';
   }
   if(sbcTest.phase==='running'){
@@ -1864,6 +1862,7 @@ function sbcCard(){
     (sbcTest.samples.length>1?'<div style="margin-top:12px;">'+spark(sbcTest.samples,null,C.voice,50,300)+'</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">intensità vocale durante il conteggio</div>':'')+
     '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
     '<div style="margin-top:10px;">'+savedBadge(sbcTest)+'</div>'+
+    extraBanner('conta')+
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="sbcReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
 }
 function armCard(){
@@ -1872,6 +1871,7 @@ function armCard(){
       '<div style="width:64px;height:64px;border-radius:999px;background:var(--primarySoft);display:grid;place-items:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24"><rect x="2" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="18" y="9" width="4" height="6" rx="1.4" fill="#2D7A52"/><rect x="6" y="11" width="12" height="2" rx="1" fill="#2D7A52"/></svg></div>'+
       '<div style="margin-top:10px;"><span class="badge neutral">Accelerometro / giroscopio</span></div>'+
       '<div style="margin-top:10px;font-size:13.5px;color:var(--inkSoft);line-height:1.55;">Telefono nella mano, <b>braccio teso in avanti</b> all\u2019orizzontale: mantienilo finché riesci (max '+armDrift.duration+' s). Misuriamo tenuta, caduta progressiva e tremore. Un bip scandisce i secondi.</div>'+
+      testVoiceBar('armdrift')+
       '<button class="btn primary full" style="margin-top:14px;" onclick="armStart()">Avvia arm drift</button></div>';
   }
   if(armDrift.phase==='align'){
@@ -1907,12 +1907,18 @@ function armCard(){
     (armDrift.samples.length>1?'<div style="margin-top:12px;">'+spark(armDrift.samples,0,C.alert,50,300)+'</div><div style="font-size:11px;color:var(--inkSoft);margin-top:2px;">caduta del braccio nel tempo (oltre i '+DRIFT_MARGIN+'° di margine)</div>':'')+
     '<div class="card" style="margin-top:12px;padding:12px;background:var(--'+(r.tone==='ok'?'ok':r.tone)+'Soft);box-shadow:none;font-size:13px;color:var(--'+(r.tone==='ok'?'ok':r.tone)+');line-height:1.5;">'+r.txt+'</div>'+
     '<div style="margin-top:10px;">'+savedBadge(armDrift)+'</div>'+
+    extraBanner('armdrift')+
     '<div style="display:flex;gap:10px;margin-top:14px;"><button class="btn full" onclick="armReset()">Ripeti</button><button class="btn full primary" onclick="closeTest()">Chiudi</button></div></div>';
 }
+function goCheckin(){
+  chk.step=-1; chk.result=null; chk.sending=false;
+  chk.beforeMeds=buildChatContext().before_meds_hint;
+  currentTab='checkin'; render({top:true});
+}
 function ScreenTest(){
-  if(testView==='ptosi')    return (eyeTest.phase==='running'?'':testHead('Test ptosi')+extraBanner('ptosi'))+eyeCard();
-  if(testView==='conta')    return testHead('Conta in un respiro')+extraBanner('conta')+sbcCard();
-  if(testView==='armdrift') return testHead('Arm drift')+extraBanner('armdrift')+armCard();
+  if(testView==='ptosi')    return (eyeTest.phase==='running'?'':testHead('Test ptosi'))+eyeCard();
+  if(testView==='conta')    return testHead('Conta in un respiro')+sbcCard();
+  if(testView==='armdrift') return testHead('Arm drift')+armCard();
   const en=SET.tests_enabled;
   const item=(key,title,sub,emoji)=>{
     const on=!!en[key], done=!!STATE.today.tests[key];
@@ -1924,8 +1930,17 @@ function ScreenTest(){
       (on?(done?'<span class="badge ok">fatto oggi ✓</span>':'<span class="badge neutral">'+SET.tests_time+'</span>'):'')+
       '</button>';
   };
+  // Check-in vocale MG-ADL incorporato tra i test (niente più tab dedicato in basso)
+  const ckDone=STATE.today.checkin;
+  const checkinItem='<button onclick="goCheckin()" style="all:unset;cursor:pointer;display:flex;gap:13px;align-items:center;background:var(--card);border-radius:18px;padding:15px;margin-top:10px;width:100%;box-sizing:border-box;border-left:4px solid var(--voice);">'+
+    '<span style="font-size:26px;flex-shrink:0;">📋</span>'+
+    '<span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:14.5px;">Check-in MG-ADL</span>'+
+    '<span style="display:block;font-size:12px;color:var(--inkSoft);margin-top:1px;">otto domande a voce · ~2 min'+(chk.beforeMeds!==false?' · prima dei farmaci':'')+'</span></span>'+
+    (ckDone?'<span class="badge ok">fatto oggi ✓</span>':'<span class="badge neutral">'+SET.checkin_time+'</span>')+
+    '</button>';
   return '<h2 style="font-size:21px;margin-top:10px;">Test del giorno</h2>'+
-  '<div style="font-size:13px;color:var(--inkSoft);margin-top:3px;line-height:1.5;">I test attivi hanno un promemoria alle '+SET.tests_time+', ma puoi eseguirli quando vuoi. I risultati finiscono nel diario condiviso con il medico; se rifai un test già fatto oggi, ti chiedo se salvare la misura extra.</div>'+
+  checkinItem+
+  '<div class="seclabel">Test fisici (sperimentali)</div>'+
   item('ptosi','Ptosi — sguardo in alto','fotocamera · 60 s','👁️')+
   item('conta','Conta in un respiro','microfono · ~30 s','🫁')+
   item('armdrift','Arm drift','sensori di movimento · 30 s','💪');
@@ -1934,7 +1949,6 @@ function ScreenTest(){
 /* ---------------- schermata Trend ---------------- */
 function ScreenTrend(){
   const days=STATE.daily;
-  const idxSeries=days.map(d=>d.vocal_index).filter(v=>v!=null);
   const scAsc=STATE.scales.slice().reverse();
   const scSeries=scAsc.map(s=>s.total);
   const mini=(key,label,unit)=>{
@@ -1944,10 +1958,23 @@ function ScreenTrend(){
       '<div class="row-flex"><span style="font-size:12px;font-weight:700;">'+label+'</span><span class="mono" style="font-size:12px;color:var(--inkSoft);">'+(last!=null?(+last).toFixed(1)+unit:'—')+'</span></div>'+
       (serie.length>=1?spark(serie,null,C.inkSoft,32,240):'<div style="font-size:11px;color:var(--inkSoft);">—</div>')+'</div>';
   };
+  // --- misure di OGGI (più registrazioni nella stessa giornata, con l'orario) ---
+  const t0=todayISO();
+  const byTime=(a,b)=>String(a.taken_at).localeCompare(String(b.taken_at));   // cronologico
+  const todayScales=(STATE.scales||[]).filter(s=>String(s.taken_at).slice(0,10)===t0).slice().sort(byTime);
+  const todayTests =(STATE.tests ||[]).filter(t=>String(t.taken_at).slice(0,10)===t0).slice().sort(byTime);
+  const testLbl=(t)=>{ const m=t.metrics||{};
+    return t.test_type==='ptosi'?'Ptosi · calo rima '+(m.decl_pfh_pct??'—')+'%':
+           t.test_type==='conta'?'Conta · ≈'+(m.count_est??'—')+' ('+(m.phonation_s??'—')+'s)':
+           'Arm drift · '+(m.hold_s??'—')+'s, '+(m.max_drift_deg??'—')+'°'; };
+  let oggiRows='';
+  todayScales.forEach(s=>{ oggiRows+='<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">📋 Check-in MG-ADL · <b>'+s.total+'/24</b>'+(s.before_meds?' · prima dei farmaci':'')+'</span><span class="mono" style="font-size:11px;color:var(--inkSoft);flex-shrink:0;margin-left:8px;">'+fmtTime(s.taken_at)+'</span></div>'; });
+  todayTests.forEach(t=>{ const m=t.metrics||{}; oggiRows+='<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">'+testLbl(t)+'</span><span style="display:flex;gap:7px;align-items:center;flex-shrink:0;margin-left:8px;"><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'da monitorare':'ok')+'</span><span class="mono" style="font-size:11px;color:var(--inkSoft);">'+fmtTime(t.taken_at)+'</span></span></div>'; });
+  const nOggi=todayScales.length+todayTests.length;
+  const oggiSection='<div class="seclabel" style="margin-top:12px;">Oggi'+(nOggi?' · '+nOggi+' misur'+(nOggi===1?'a':'e'):'')+'</div>'+
+    '<div class="card">'+(oggiRows||'<div style="font-size:12.5px;color:var(--inkSoft);">Nessuna misura ancora oggi. Fai un check-in o un test per vederlo qui con l\u2019orario.</div>')+'</div>';
   return '<h2 style="font-size:21px;margin-top:10px;">Andamento</h2>'+
-  '<div class="seclabel" style="margin-top:12px;">Indice vocale · 30 giorni</div>'+
-  '<div class="card">'+(idxSeries.length>=1?spark(idxSeries,50,C.voice,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Ancora pochi dati: indossa la collana per qualche giorno.</div>')+
-  '<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">50 = baseline personale · sopra 70 attenzione, sopra 85 alert · <b>sperimentale</b></div></div>'+
+  oggiSection+
   '<div class="seclabel">MG-ADL dal check-in</div>'+
   '<div class="card">'+(scSeries.length>=1?spark(scSeries,null,C.primary,56,300):'<div style="font-size:12.5px;color:var(--inkSoft);">Compila il primo check-in per iniziare la serie.</div>')+
   (STATE.scales.length?'<div style="font-size:11px;color:var(--inkSoft);margin-top:5px;">ultimo: <b>'+STATE.scales[0].total+'/24</b> · '+fmtDate(STATE.scales[0].taken_at)+' '+fmtTime(STATE.scales[0].taken_at)+(STATE.scales[0].before_meds?' · prima dei farmaci':'')+'</div>':'')+'</div>'+
@@ -1960,7 +1987,7 @@ function ScreenTrend(){
       const lbl=t.test_type==='ptosi'?'Ptosi · calo rima '+(m.decl_pfh_pct??'—')+'%':
                t.test_type==='conta'?'Conta · ≈'+(m.count_est??'—')+' ('+(m.phonation_s??'—')+'s)':
                'Arm drift · '+(m.hold_s??'—')+'s, '+(m.max_drift_deg??'—')+'°';
-      return '<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">'+lbl+'</span><span style="display:flex;gap:7px;align-items:center;"><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'da monitorare':'ok')+'</span><span class="mono" style="font-size:10.5px;color:var(--inkSoft);">'+fmtDate(t.taken_at)+'</span></span></div>';
+      return '<div class="row-flex" style="margin-top:7px;"><span style="font-size:13px;">'+lbl+'</span><span style="display:flex;gap:7px;align-items:center;"><span class="badge '+(m.tone||'ok')+'">'+(m.tone==='alert'?'alterato':m.tone==='warn'?'da monitorare':'ok')+'</span><span class="mono" style="font-size:10.5px;color:var(--inkSoft);">'+fmtDate(t.taken_at)+' '+fmtTime(t.taken_at)+'</span></span></div>';
     }).join(''):'<div style="font-size:12.5px;color:var(--inkSoft);">nessun test registrato</div>')+'</div>'+
   '<div style="text-align:center;margin-top:18px;"><a href="medico.html" style="font-size:13px;color:var(--primary);font-weight:700;">Apri la dashboard medico →</a></div>';
 }
@@ -2191,7 +2218,6 @@ function ScreenTerapia(){
     : '<button class="btn full" style="margin-top:'+(meds.length?'12px':'4px')+';" onclick="toggleMedsEdit()">'+(meds.length?'Modifica terapia':'Aggiungi terapia')+'</button>';
 
   return '<h2 style="font-size:21px;margin-top:10px;">Terapia</h2>'+
-  '<div style="font-size:13.5px;color:var(--inkSoft);line-height:1.55;margin-top:4px;">Il tuo piano e le assunzioni di oggi. I promemoria arrivano all\u2019orario di ciascun farmaco.</div>'+
   banner+
   '<div class="seclabel">Oggi</div>'+
   oggi+
@@ -2234,7 +2260,6 @@ function buildChatContext(){
     before_meds_hint:beforeMeds,
     tests, tests_time:SET.tests_time,
     meds, morning_med_pending:morningMedPending,
-    last_index:STATE.lastIndex,
     baseline_set:!!(lis.baseline&&lis.baseline.manual)||!!localStorage.getItem('mg_baseline_set'),
     configured:(typeof MG_CONFIGURED!=='undefined'&&MG_CONFIGURED)
   };
@@ -2249,7 +2274,8 @@ function dispatchHorus(action){
     case 'avvia_checkin':    chk.step=-1; chk.result=null; chk.sending=false;
                              chk.beforeMeds=buildChatContext().before_meds_hint; currentTab='checkin'; break;
     case 'avvia_test':       { const t=(action.input&&action.input.tipo)||'ptosi';
-                               testView=['ptosi','conta','armdrift'].includes(t)?t:'menu'; currentTab='test'; } break;
+                               if(['ptosi','conta','armdrift'].includes(t)){ currentTab='test'; openTest(t); return; }
+                               testView='menu'; currentTab='test'; } break;
     case 'apri_andamento':   currentTab='trend'; break;
     case 'apri_terapia':     currentTab='terapia'; break;
     case 'segna_terapia':    markTherapy(action.input||{}); return;   // gestisce navigazione e refresh
@@ -2394,33 +2420,33 @@ function toggleHorusMute(){
 }
 
 function routineSteps(){
+  // ordine del mattino: prima il check-in MG-ADL, poi la terapia (i test fisici sono sperimentali e restano facoltativi, fuori dalla routine)
   const s=[];
   if(!STATE.today.checkin) s.push('checkin');
-  const en=SET.tests_enabled||{};
-  if(['ptosi','conta','armdrift'].some(k=>en[k] && !STATE.today.tests[k])) s.push('tests');
   if(pendingMorningMeds().length) s.push('therapy');
   return s;
 }
 function routinePrompt(step){
-  if(step==='checkin') return 'Vuoi fare il check-in di oggi adesso? Rispondi sì o no.';
+  if(step==='checkin') return 'Iniziamo dal check-in, per capire come stai oggi: vuoi farlo ora?';
   if(step==='tests'){
     const en=SET.tests_enabled||{}, L={ptosi:'ptosi',conta:'conta in un respiro',armdrift:'arm drift'};
     const p=['ptosi','conta','armdrift'].filter(k=>en[k] && !STATE.today.tests[k]).map(k=>L[k]);
     return 'Vuoi eseguire ora '+(p.length>1?'i test ('+p.join(', ')+')':'il test della '+p[0])+'? Sì o no.';
   }
-  if(step==='therapy') return 'Hai già preso la terapia di stamattina? Sì o no.';
+  if(step==='therapy') return 'Hai già preso la terapia di stamattina?';
   return '';
 }
 function startRoutine(){
   const nm=SET.first_name?' '+SET.first_name:'';
-  chat.routine.steps=routineSteps(); chat.routine.step=0; chat.routine.armed=false;
+  // microfono attivo all'apertura: la routine si mette in ascolto da sola dopo la domanda
+  chat.routine.steps=routineSteps(); chat.routine.step=0; chat.routine.armed=true;
   if(!chat.routine.steps.length){
     chat.routine.active=false; chat.routine.done=true;
-    pushBot('Ciao'+nm+'! Per oggi sei in pari. Se ti serve qualcosa — vedere l\u2019andamento, registrare la voce o altro — chiedimi pure a voce o per iscritto.');
+    pushBot('Ciao'+nm+'! Per oggi sei in pari. Come ti senti? Se vuoi raccontarmi com\u2019è andata o ti serve altro, dimmi pure — a voce o per iscritto.');
     render({bottom:true}); return;
   }
   chat.routine.active=true; chat.routine.done=false;
-  pushBot('Ciao'+nm+'! Sono Horus, facciamo un rapido punto della mattina.');
+  pushBot('Ciao'+nm+'! Come va stamattina? Vediamo insieme cosa c\u2019è da fare.');
   routineAsk();
 }
 function routineAsk(){
@@ -2498,10 +2524,6 @@ function routineNext(){
 
 function ScreenHorus(){
   const ctx=buildChatContext();
-  const idx=STATE.lastIndex;
-  const idxPill = idx!=null
-    ? '<span class="pill" style="color:'+(idx>=85?'var(--alert)':idx>=70?'var(--warn)':'var(--ok)')+';">indice '+Math.round(idx)+'</span>'
-    : '';
   const medsTotal=(STATE.meds||[]).length;
   const medsDone=(STATE.meds||[]).filter(m=>medTakenToday(m.id)).length;
   const pendCount=(ctx.checkin_done?0:1)+ctx.tests.filter(t=>!t.done).length+(medsTotal-medsDone);
@@ -2519,35 +2541,31 @@ function ScreenHorus(){
   if(chat.busy) thread+='<div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;"><div class="horusav" style="width:30px;height:30px;">'+horusAvatarSVG().replace('width="24" height="24"','width="16" height="16"')+'</div><div class="bubble bot" style="margin-top:0;padding:4px 6px;"><div class="typing"><span></span><span></span><span></span></div></div></div>';
   if(chat.error) thread+='<div style="font-size:11.5px;color:var(--inkSoft);margin-top:8px;text-align:center;">Horus è in modalità locale ('+esc(chat.error)+').</div>';
 
-  // chip azioni: prima i pendenti, poi sempre-disponibili
+  // I pulsanti rapidi (check-in/test/terapia/collana/andamento) sono stati rimossi dalla home:
+  // l'interazione qui è guidata dalla voce di Horus. La navigazione manuale resta nella barra in basso.
   let chips='';
-  if(!ctx.checkin_done) chips+='<button class="chip primary" onclick="chip(\u0027avvia_checkin\u0027)">📋 Check-in</button>';
-  ctx.tests.filter(t=>!t.done).forEach(t=>{
-    const emo=t.tipo==='ptosi'?'👁️':t.tipo==='conta'?'🫁':'💪';
-    chips+='<button class="chip primary" onclick="chip(\u0027avvia_test\u0027,\u0027'+t.tipo+'\u0027)">'+emo+' '+esc(t.label)+'</button>';
-  });
-  // terapia: se c'è da prendere e il check-in è fatto → segna; altrimenti apri la pagina
-  const medsPending=pendingMeds().length>0;
-  if(medsPending && ctx.checkin_done) chips+='<button class="chip primary" onclick="chip(\u0027segna_terapia\u0027)">💊 Prendi terapia</button>';
-  else chips+='<button class="chip" onclick="chip(\u0027apri_terapia\u0027)">💊 Terapia</button>';
-  chips+='<button class="chip" onclick="chip(\u0027avvia_collana\u0027)">🎙️ Collana</button>';
-  chips+='<button class="chip" onclick="chip(\u0027apri_andamento\u0027)">📈 Andamento</button>';
-  if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>'+chips;
+  if(pendCount===0) chips='<span style="font-size:12.5px;color:var(--ok);font-weight:600;">✓ Tutto fatto per oggi</span>';
 
-  // avvio guidato: i controlli vocali del passo corrente si AGGIUNGONO ai chip,
-  // così i test (e ogni altra azione) restano sempre toccabili anche durante la routine
+  // avvio guidato: risposta rapida Sì / No (la voce si gestisce dal microfono in basso)
   if(chat.routine && chat.routine.active){
-    const lisn=chat.routine.listening;
-    const ctl =
-      '<button class="chip primary" onclick="'+(lisn?'routineStopListen()':'routineListen()')+'">'+
-        (lisn?'🔴 Sto ascoltando… tocca per fermare':'🎤 Rispondi a voce')+'</button>'+
+    chips =
       '<button class="chip" onclick="routineAnswer(\u0027yes\u0027)">Sì</button>'+
-      '<button class="chip" onclick="routineAnswer(\u0027no\u0027)">No</button>';
-    chips = ctl + chips;
+      '<button class="chip" onclick="routineAnswer(\u0027no\u0027)">No</button>' + chips;
   }
 
   const micEnabled=sttSupported();
-  return '<div class="horuswrap">'+
+  // il microfono della home è "attivo" sia in dettatura libera sia mentre la routine ascolta la risposta
+  const micListening = chat.listening || !!(chat.routine && chat.routine.listening);
+  const micClick = (chat.routine && chat.routine.listening) ? 'routineStopListen()' : 'chatMic()';
+  return (chat.listening?
+    '<div class="liveoverlay">'+
+      '<button class="livedot" onclick="chatMic()" aria-label="Pausa" title="Tocca per mettere in pausa" style="border:none;cursor:pointer;"><svg width="40" height="40" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg></button>'+
+      '<div class="livewords" id="chatLiveBig">'+(chat.live?esc(chat.live):'<span class="livehint">Ti ascolto… parla pure</span>')+'</div>'+
+      '<div style="font-size:13px;color:var(--inkSoft);">Tocca il microfono per mettere in pausa, poi puoi scrivere o inviare.</div>'+
+      '<button class="btn voice" style="font-size:16px;padding:14px 28px;" onclick="chatMic()">Fatto</button>'+
+    '</div>'
+  :'')+
+  '<div class="horuswrap">'+
     '<div class="horushead">'+
       '<div class="horusav'+(chat.busy?' think':'')+'" id="horusAv">'+horusAvatarSVG()+'</div>'+
       '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:17px;">Horus</div>'+
@@ -2560,19 +2578,19 @@ function ScreenHorus(){
         '</button>'+
         '<button onclick="openSettings()" aria-label="Impostazioni" title="Impostazioni" style="all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--inkSoft);background:var(--card);">'+
           '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'+
-        '</button>'+idxPill+progPill+'</div>'+
+        '</button>'+progPill+'</div>'+
     '</div>'+
     '<div class="chatscroll" id="chatScroll">'+
       (thread||'')+
       '<div class="chips">'+chips+'</div>'+
     '</div>'+
     '<div class="composer">'+
-      '<textarea id="chatInput" rows="1" placeholder="'+(chat.listening?'Ti ascolto… parla pure':'Scrivi a Horus…')+'" oninput="autoGrow(this);chatClearSync()" onkeydown="chatKey(event)"></textarea>'+
+      '<textarea id="chatInput" rows="1" placeholder="'+(micListening?'Ti ascolto… parla pure':'Scrivi a Horus…')+'" oninput="autoGrow(this);chatClearSync()" onkeydown="chatKey(event)"></textarea>'+
       '<div class="composerRow">'+
         '<button class="cbtn clear" id="chatClearBtn" onclick="chatClear()" aria-label="Cancella il testo" title="Cancella" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>'+
         (micEnabled
-          ? '<button class="cbtn mic'+(chat.listening?' live':'')+'" onclick="chatMic()" aria-label="'+(chat.listening?'Pausa':'Parla')+'" title="'+(chat.listening?'Pausa':'Parla')+'">'+
-              (chat.listening
+          ? '<button class="cbtn mic'+(micListening?' live':'')+'" onclick="'+micClick+'" aria-label="'+(micListening?'Pausa':'Parla')+'" title="'+(micListening?'Pausa':'Parla')+'">'+
+              (micListening
                 ? '<svg width="24" height="24" viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.6" fill="#fff"/></svg>'
                 : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0" stroke="#fff" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17.5" x2="12" y2="21" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>')+
             '</button>'
@@ -2648,9 +2666,8 @@ async function finishOnboarding(){
 
 /* ---------------- navigazione, ambiente, avvio ---------------- */
 const TABS=[
-  {id:'horus',  label:'Horus',   fn:ScreenHorus,   icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 12c2.4-3.6 5.6-5.5 9-5.5s6.6 1.9 9 5.5c-2.4 3.6-5.6 5.5-9 5.5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 17.5c-.7 1.3-1 2.4-.9 3.5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>'},
+  {id:'horus',  label:'Horus',   fn:ScreenHorus,   icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M2.5 12C4.7 7.7 8.1 5.5 12 5.5s7.3 2.2 9.5 6.5c-2.2 4.3-5.6 6.5-9.5 6.5S4.7 16.3 2.5 12Z" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.7" stroke="currentColor" stroke-width="2.1"/></svg>'},
   {id:'ascolto',label:'Collana', fn:ScreenAscolto, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 3c0 4.5 3 6.5 7 6.5S19 7.5 19 3" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><circle cx="12" cy="14.5" r="4.5" stroke="currentColor" stroke-width="2.1"/><circle cx="12" cy="14.5" r="1.4" fill="currentColor"/></svg>'},
-  {id:'checkin',label:'Check-in',fn:ScreenCheckin, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-4.2 3.4c-.4.3-.8 0-.8-.5z" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/></svg>'},
   {id:'test',   label:'Test',    fn:ScreenTest,    icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 13h4l2.5-6 4 11 2.5-5h5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>'},
   {id:'terapia',label:'Terapia', fn:ScreenTerapia, icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5.5 13.5 13 6a4.6 4.6 0 0 1 6.5 6.5L12 20a4.6 4.6 0 0 1-6.5-6.5Z" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/><path d="m8.7 10.3 5 5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>'},
   {id:'trend',  label:'Trend',   fn:ScreenTrend,   icon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="m7 14 3.5-4 3 2.5L18 7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'}
@@ -2666,6 +2683,14 @@ function setTab(id){
   }
   currentTab=id; render({top:true});
 }
+// schermate raggiungibili senza pulsante in basso (il check-in vive dentro i Test)
+const HIDDEN_SCREENS={ checkin:ScreenCheckin };
+function screenFn(id){ const t=TABS.find(x=>x.id===id); return t?t.fn:(HIDDEN_SCREENS[id]||TABS[0].fn); }
+function navActiveFor(id){ return id==='checkin'?'test':id; }   // il check-in evidenzia il tab Test
+// icona del tab Horus = occhio dell'app (bianco sul pill attivo, verde quando inattivo)
+function horusTabIcon(active){
+  return '<img src="icons/eye-'+(active?'white':'green')+'.png" width="21" height="21" alt="" style="display:block;object-fit:contain;">';
+}
 function render(opts){
   opts=opts||{};
   const scr=document.getElementById('screen');
@@ -2673,17 +2698,17 @@ function render(opts){
   // preserva la posizione di scroll della chat di Horus tra i re-render (es. tasto muta)
   let csPrev=0, csBottom=true;
   if(currentTab==='horus'){ const cs0=document.getElementById('chatScroll'); if(cs0){ csPrev=cs0.scrollTop; csBottom=(cs0.scrollHeight-cs0.scrollTop-cs0.clientHeight)<40; } }
-  const tab=TABS.find(t=>t.id===currentTab)||TABS[0];
-  scr.innerHTML=tab.fn();
+  scr.innerHTML=screenFn(currentTab)();
   scr.scrollTop=keep;
   // la chat di Horus cresce verso il basso: resta in fondo se eri in fondo, altrimenti mantiene la posizione
   if(currentTab==='horus'){
     const cs=document.getElementById('chatScroll');
     if(cs) cs.scrollTop=(opts.bottom||opts.top||csBottom)?cs.scrollHeight:csPrev;
   }
+  const active=navActiveFor(currentTab);
   document.getElementById('nav').innerHTML=TABS.map(t=>
-    '<button class="'+(t.id===currentTab?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
-    '<span class="ic">'+t.icon+'</span>'+t.label+'</button>').join('');
+    '<button class="'+(t.id===active?'active':'')+'" onclick="setTab(\u0027'+t.id+'\u0027)" aria-label="'+t.label+'">'+
+    '<span class="ic">'+(t.id==='horus'?horusTabIcon(t.id===active):t.icon)+'</span>'+t.label+'</button>').join('');
   if(chat.opened){ saveHorusSession(); }   // persistenza del thread (per non rifare il saluto a ogni apertura)
 }
 function envCheck(){
